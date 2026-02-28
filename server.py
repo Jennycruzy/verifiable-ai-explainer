@@ -1,6 +1,9 @@
 """
 server.py — Verifiable Wallet Transaction Explainer
-Flask backend using OpenGradient SDK for verifiable AI inference.
+Fetches REAL transaction data from any EVM chain, then explains with OpenGradient AI.
+
+Supported chains: Ethereum, Base, Arbitrum, Optimism, Polygon, BSC, Avalanche,
+Fantom, Linea, Scroll, zkSync, Blast, Mantle, Celo, Gnosis, Cronos
 """
 
 import os
@@ -9,6 +12,8 @@ import secrets
 import traceback
 import sys
 import time
+import urllib.request
+import urllib.error
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -30,7 +35,6 @@ try:
 except Exception as e:
     print(f"⚠️  OpenGradient not available: {e}", flush=True)
 
-# Global client — reused across requests
 _og_client = None
 
 def get_og_client():
@@ -39,155 +43,236 @@ def get_og_client():
         return _og_client
     if not OG_AVAILABLE:
         return None
-
     private_key = os.environ.get("OG_PRIVATE_KEY", "")
     if not private_key or "YOUR_PRIVATE_KEY" in private_key:
         return None
-
     try:
         _og_client = og.Client(private_key=private_key)
-        print(f"✅ OG client created (key: {private_key[:8]}...)", flush=True)
         try:
             _og_client.llm.ensure_opg_approval(opg_amount=5.0)
-            print("✅ $OPG approval done", flush=True)
-        except Exception as e:
-            print(f"⚠️  Approval skipped: {e}", flush=True)
+        except Exception:
+            pass
+        print("✅ OG client ready", flush=True)
         return _og_client
     except Exception as e:
-        print(f"❌ Client failed: {e}", flush=True)
+        print(f"❌ OG client failed: {e}", flush=True)
         return None
 
 
-# ── Transaction Data ─────────────────────────────────────────
-def get_mock_transaction(tx_hash):
-    return {
-        "hash": tx_hash,
-        "from": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-        "to": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        "value": "1.5 ETH",
-        "gasUsed": 21000,
-        "gasPrice": "30 gwei",
-        "gasFeeETH": f"{(21000 * 30) / 1e9:.6f} ETH",
-        "blockNumber": 18923451,
-        "status": "Success",
-        "timestamp": "2025-01-15T10:30:00Z",
-        "tokenTransfers": [
-            {"token": "USDT", "amount": "200",
-             "from": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-             "to": "0xdAC17F958D2ee523a2206206994597C13D831ec7"},
-            {"token": "WETH", "amount": "0.5",
-             "from": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-             "to": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"},
-        ],
-    }
+# ── EVM Chain Registry ───────────────────────────────────────
+# Etherscan v2 API supports chainid parameter for many chains.
+# For chains not on v2, we use their individual explorer APIs.
+
+ETHERSCAN_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
+
+# Etherscan V2 supported chains (use single API with chainid)
+ETHERSCAN_V2_CHAINS = [
+    {"name": "Ethereum",       "chainid": 1,      "symbol": "ETH",   "explorer": "https://etherscan.io"},
+    {"name": "Base",           "chainid": 8453,    "symbol": "ETH",   "explorer": "https://basescan.org"},
+    {"name": "Arbitrum One",   "chainid": 42161,   "symbol": "ETH",   "explorer": "https://arbiscan.io"},
+    {"name": "Optimism",       "chainid": 10,      "symbol": "ETH",   "explorer": "https://optimistic.etherscan.io"},
+    {"name": "Polygon",        "chainid": 137,     "symbol": "MATIC", "explorer": "https://polygonscan.com"},
+    {"name": "BNB Chain",      "chainid": 56,      "symbol": "BNB",   "explorer": "https://bscscan.com"},
+    {"name": "Avalanche C",    "chainid": 43114,   "symbol": "AVAX",  "explorer": "https://snowscan.xyz"},
+    {"name": "Fantom",         "chainid": 250,     "symbol": "FTM",   "explorer": "https://ftmscan.com"},
+    {"name": "Linea",          "chainid": 59144,   "symbol": "ETH",   "explorer": "https://lineascan.build"},
+    {"name": "Scroll",         "chainid": 534352,  "symbol": "ETH",   "explorer": "https://scrollscan.com"},
+    {"name": "Blast",          "chainid": 81457,   "symbol": "ETH",   "explorer": "https://blastscan.io"},
+    {"name": "Mantle",         "chainid": 5000,    "symbol": "MNT",   "explorer": "https://mantlescan.xyz"},
+    {"name": "Celo",           "chainid": 42220,   "symbol": "CELO",  "explorer": "https://celoscan.io"},
+    {"name": "Gnosis",         "chainid": 100,     "symbol": "xDAI",  "explorer": "https://gnosisscan.io"},
+    {"name": "Cronos",         "chainid": 25,      "symbol": "CRO",   "explorer": "https://cronoscan.com"},
+    {"name": "zkSync Era",     "chainid": 324,     "symbol": "ETH",   "explorer": "https://explorer.zksync.io"},
+    {"name": "Polygon zkEVM",  "chainid": 1101,    "symbol": "ETH",   "explorer": "https://zkevm.polygonscan.com"},
+    {"name": "Base Sepolia",   "chainid": 84532,   "symbol": "ETH",   "explorer": "https://sepolia.basescan.org"},
+    {"name": "Sepolia",        "chainid": 11155111,"symbol": "ETH",   "explorer": "https://sepolia.etherscan.io"},
+]
 
 
-def get_mock_response(tx_data):
-    gas_fee = tx_data.get("gasFeeETH", "0.000630 ETH")
-    return {
-        "explanation": f"""## Transaction Summary
-This transaction was sent from wallet 0x71C7...976F to contract 0xA0b8...eB48.
+def fetch_tx_from_chain(tx_hash, chain):
+    """Try to fetch a transaction from a specific chain via Etherscan V2 API."""
+    api_key = ETHERSCAN_KEY or "YourApiKeyToken"
+    chainid = chain["chainid"]
 
-## What Happened
-The sender transferred **1.5 ETH** (Ethereum) to the receiving address. Additionally, two token transfers occurred:
-- **200 USDT** (a stablecoin worth ~$200) was sent to address 0xdAC1...1ec7
-- **0.5 WETH** (Wrapped Ether) was received back from the contract
+    tx_url = (
+        f"https://api.etherscan.io/v2/api?chainid={chainid}"
+        f"&module=proxy&action=eth_getTransactionByHash"
+        f"&txhash={tx_hash}&apikey={api_key}"
+    )
 
-This looks like a **token swap** — the user exchanged ETH/USDT for WETH through a smart contract (likely a decentralized exchange like Uniswap).
+    try:
+        req = urllib.request.Request(tx_url, headers={"User-Agent": "WalletExplainer/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
 
-## Gas Fees
-The transaction used **21,000 gas units** at a price of **30 gwei per unit**.
-Total gas fee: **{gas_fee}** (roughly $1.20 at current prices).
+        result = data.get("result")
+        if not result or result == "null" or isinstance(result, str):
+            return None
 
-## Suspicion Check
-✅ **No suspicious patterns detected.**
-- The gas fee is within normal range
-- The addresses are not flagged
-- The transaction pattern is consistent with a typical DEX swap""",
-        "proof": {
-            "paymentHash": "0x" + secrets.token_hex(32),
-            "model": "GEMINI_2_5_FLASH (mock)",
-            "verifiedByTEE": False,
-            "explorerUrl": "https://explorer.opengradient.ai",
-            "settlementNetwork": "Base Sepolia",
-            "inferenceNetwork": "OpenGradient Testnet",
-            "mode": "MOCK",
-        },
-    }
+        # Found it — now get receipt
+        receipt_url = (
+            f"https://api.etherscan.io/v2/api?chainid={chainid}"
+            f"&module=proxy&action=eth_getTransactionReceipt"
+            f"&txhash={tx_hash}&apikey={api_key}"
+        )
+        req2 = urllib.request.Request(receipt_url, headers={"User-Agent": "WalletExplainer/1.0"})
+        with urllib.request.urlopen(req2, timeout=8) as resp2:
+            receipt_data = json.loads(resp2.read().decode())
+        receipt = receipt_data.get("result", {})
 
+        # Parse values
+        value_wei = int(result.get("value", "0x0"), 16)
+        value_native = value_wei / 1e18
+        gas_price_wei = int(result.get("gasPrice", "0x0"), 16)
+        gas_price_gwei = gas_price_wei / 1e9
+        gas_limit = int(result.get("gas", "0x0"), 16)
+        block_number = int(result.get("blockNumber", "0x0"), 16)
+        gas_used = int(receipt.get("gasUsed", "0x0"), 16) if receipt else gas_limit
+        status = "Success" if receipt and receipt.get("status") == "0x1" else "Failed"
+        gas_fee = (gas_used * gas_price_wei) / 1e18
 
-def call_opengradient(prompt, max_retries=3):
-    """Call OpenGradient LLM with retries."""
-    client = get_og_client()
-    if client is None:
+        # Parse ERC-20 token transfers
+        token_transfers = []
+        transfer_topic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+        if receipt and receipt.get("logs"):
+            for log in receipt["logs"]:
+                topics = log.get("topics", [])
+                if topics and topics[0] == transfer_topic and len(topics) >= 3:
+                    token_from = "0x" + topics[1][-40:]
+                    token_to = "0x" + topics[2][-40:]
+                    raw_amount = int(log.get("data", "0x0"), 16)
+                    token_transfers.append({
+                        "token": log["address"][:10] + "...",
+                        "amount": str(raw_amount),
+                        "from": token_from,
+                        "to": token_to,
+                    })
+
+        symbol = chain["symbol"]
+        is_contract_call = result.get("input", "0x") != "0x"
+
+        return {
+            "hash": tx_hash,
+            "from": result.get("from", "unknown"),
+            "to": result.get("to") or "Contract Creation",
+            "value": f"{value_native:.6f} {symbol}" if value_native > 0 else f"0 {symbol}",
+            "gasUsed": gas_used,
+            "gasPrice": f"{gas_price_gwei:.2f} gwei",
+            "gasFeeETH": f"{gas_fee:.6f} {symbol}",
+            "blockNumber": block_number,
+            "status": status,
+            "chain": chain["name"],
+            "chainExplorer": f"{chain['explorer']}/tx/{tx_hash}",
+            "symbol": symbol,
+            "tokenTransfers": token_transfers[:5],
+            "isContractCall": is_contract_call,
+            "inputData": result.get("input", "0x")[:100],
+            "nonce": int(result.get("nonce", "0x0"), 16),
+        }
+
+    except Exception:
         return None
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            print(f"🚀 LLM attempt {attempt}/{max_retries}...", flush=True)
-            start = time.time()
 
-            result = client.llm.chat(
-                model=og.TEE_LLM.GEMINI_2_5_FLASH,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a blockchain transaction analyst. Explain transactions clearly for beginners. Use markdown with ## headers and **bold**."
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=500,
-                temperature=0.3,
-            )
+def fetch_real_transaction(tx_hash):
+    """Try all EVM chains to find the transaction."""
+    print(f"📡 Searching across {len(ETHERSCAN_V2_CHAINS)} EVM chains...", flush=True)
 
-            elapsed = time.time() - start
-            print(f"✅ LLM responded in {elapsed:.1f}s", flush=True)
+    # Try popular chains first (Ethereum, Base, Arbitrum, Optimism, Polygon, BSC)
+    priority_chains = ETHERSCAN_V2_CHAINS[:6]
+    other_chains = ETHERSCAN_V2_CHAINS[6:]
 
-            # Extract content
-            explanation = None
-            if hasattr(result, 'chat_output'):
-                co = result.chat_output
-                if isinstance(co, dict):
-                    explanation = co.get("content", str(co))
-                else:
-                    explanation = str(co)
+    for chain in priority_chains:
+        result = fetch_tx_from_chain(tx_hash, chain)
+        if result:
+            print(f"✅ Found on {chain['name']}!", flush=True)
+            return result
 
-            payment_hash = getattr(result, "payment_hash", None)
-            print(f"📦 Payment hash: {payment_hash}", flush=True)
+    # Try remaining chains
+    for chain in other_chains:
+        result = fetch_tx_from_chain(tx_hash, chain)
+        if result:
+            print(f"✅ Found on {chain['name']}!", flush=True)
+            return result
 
-            if explanation:
-                return {
-                    "explanation": explanation,
-                    "payment_hash": payment_hash,
-                }
-
-        except Exception as e:
-            elapsed = time.time() - start
-            error_msg = str(e)
-            print(f"❌ Attempt {attempt} failed ({elapsed:.1f}s): {error_msg}", flush=True)
-
-            # If payment error, wait and retry
-            if "payment" in error_msg.lower() and attempt < max_retries:
-                wait = attempt * 2
-                print(f"⏳ Retrying in {wait}s...", flush=True)
-                time.sleep(wait)
-                continue
-
-            # Other errors — don't retry
-            if "payment" not in error_msg.lower():
-                break
-
+    print("⚠️  Transaction not found on any chain", flush=True)
     return None
 
 
-def analyze_with_opengradient(tx_data):
-    prompt = f"""You are a blockchain expert. Explain this transaction in simple, beginner-friendly English.
+def get_fallback_transaction(tx_hash):
+    return {
+        "hash": tx_hash,
+        "from": "unknown",
+        "to": "unknown",
+        "value": "unknown",
+        "gasUsed": 0,
+        "gasPrice": "unknown",
+        "gasFeeETH": "unknown",
+        "blockNumber": 0,
+        "status": "Unknown",
+        "chain": "Unknown",
+        "chainExplorer": "",
+        "symbol": "ETH",
+        "tokenTransfers": [],
+        "isContractCall": False,
+        "inputData": "0x",
+        "nonce": 0,
+    }
+
+
+# ── OpenGradient AI Analysis ────────────────────────────────
+
+def call_opengradient(prompt, max_retries=2):
+    client = get_og_client()
+    if client is None:
+        return None
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"🚀 LLM attempt {attempt}...", flush=True)
+            start = time.time()
+            result = client.llm.chat(
+                model=og.TEE_LLM.GEMINI_2_5_FLASH,
+                messages=[
+                    {"role": "system", "content": "You are a blockchain transaction analyst. Explain transactions clearly for beginners. Use markdown with ## headers and **bold**."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=600,
+                temperature=0.3,
+            )
+            elapsed = time.time() - start
+            print(f"✅ LLM responded in {elapsed:.1f}s", flush=True)
+            explanation = None
+            if hasattr(result, 'chat_output'):
+                co = result.chat_output
+                explanation = co.get("content", str(co)) if isinstance(co, dict) else str(co)
+            payment_hash = getattr(result, "payment_hash", None)
+            if explanation:
+                return {"explanation": explanation, "payment_hash": payment_hash}
+        except Exception as e:
+            print(f"❌ LLM attempt {attempt}: {e}", flush=True)
+            if attempt < max_retries:
+                time.sleep(2)
+    return None
+
+
+def analyze_transaction_data(tx_data):
+    chain_name = tx_data.get("chain", "Unknown")
+    explorer_link = tx_data.get("chainExplorer", "")
+    is_real = chain_name != "Unknown"
+
+    prompt = f"""You are a blockchain expert. Explain this {'real ' if is_real else ''}transaction from the **{chain_name}** network in simple, beginner-friendly English.
 
 Break your answer into these sections:
 1. SUMMARY — what happened in one sentence
-2. DETAILS — where the funds went, who sent what to whom
-3. GAS FEES — how much was paid in fees and what that means
-4. SUSPICION CHECK — any suspicious patterns or is this normal
+2. CHAIN — which blockchain network this was on and what that means
+3. DETAILS — where the funds went, who sent what to whom
+4. GAS FEES — how much was paid in fees and whether that's normal for {chain_name}
+5. SUSPICION CHECK — any suspicious patterns or is this normal
+
+{"This is a smart contract interaction (not a simple transfer)." if tx_data.get("isContractCall") else "This is a simple value transfer."}
+{f"Token transfers detected: {len(tx_data.get('tokenTransfers', []))} ERC-20 transfers." if tx_data.get("tokenTransfers") else ""}
+
+Explorer link: {explorer_link}
 
 Use markdown: ## for headers, **bold** for emphasis.
 
@@ -211,7 +296,30 @@ Transaction data:
             },
         }
 
-    return get_mock_response(tx_data)
+    # Fallback — no AI
+    return {
+        "explanation": f"""## Transaction on {chain_name}
+**Hash:** {tx_data['hash'][:16]}...
+**From:** {tx_data['from']}
+**To:** {tx_data['to']}
+**Value:** {tx_data['value']}
+**Status:** {tx_data['status']}
+**Block:** #{tx_data['blockNumber']:,}
+**Gas Fee:** {tx_data['gasFeeETH']}
+
+{f"[View on Explorer]({explorer_link})" if explorer_link else ""}
+
+⚠️ AI explanation unavailable — showing raw data.""",
+        "proof": {
+            "paymentHash": "0x" + secrets.token_hex(32),
+            "model": "fallback (no AI)",
+            "verifiedByTEE": False,
+            "explorerUrl": "https://explorer.opengradient.ai",
+            "settlementNetwork": "Base Sepolia",
+            "inferenceNetwork": "OpenGradient Testnet",
+            "mode": "MOCK",
+        },
+    }
 
 
 # ── Routes ───────────────────────────────────────────────────
@@ -237,11 +345,18 @@ def analyze_transaction():
         print(f"\n{'='*50}", flush=True)
         print(f"🔍 Analyzing: {tx_hash}", flush=True)
 
-        tx_data = get_mock_transaction(tx_hash)
-        analysis = analyze_with_opengradient(tx_data)
+        # Fetch real transaction from any EVM chain
+        tx_data = fetch_real_transaction(tx_hash)
+        if tx_data is None:
+            print("⚠️  Not found — using fallback", flush=True)
+            tx_data = get_fallback_transaction(tx_hash)
+
+        # Analyze with OpenGradient AI
+        analysis = analyze_transaction_data(tx_data)
 
         mode = analysis["proof"]["mode"]
-        print(f"📤 Result: {mode}", flush=True)
+        chain = tx_data.get("chain", "Unknown")
+        print(f"📤 Result: {mode} | Chain: {chain}", flush=True)
         print(f"{'='*50}\n", flush=True)
 
         return jsonify({
@@ -256,7 +371,9 @@ def analyze_transaction():
                 "gasFee": tx_data["gasFeeETH"],
                 "status": tx_data["status"],
                 "block": tx_data["blockNumber"],
-                "tokenTransfers": tx_data["tokenTransfers"],
+                "chain": tx_data.get("chain", "Unknown"),
+                "chainExplorer": tx_data.get("chainExplorer", ""),
+                "tokenTransfers": tx_data.get("tokenTransfers", []),
             },
             "explanation": analysis["explanation"],
             "proof": analysis["proof"],
@@ -269,34 +386,18 @@ def analyze_transaction():
 
 @app.route("/debug")
 def debug():
-    """Quick status check."""
     pk = os.environ.get("OG_PRIVATE_KEY", "")
     has_key = bool(pk) and "YOUR" not in pk
-    info = {
+    return jsonify({
         "sdk": OG_AVAILABLE,
         "key": f"{pk[:8]}..." if has_key else "NOT SET",
-    }
-    if has_key and OG_AVAILABLE:
-        try:
-            client = og.Client(private_key=pk)
-            info["client"] = "OK"
-            try:
-                r = client.llm.chat(
-                    model=og.TEE_LLM.GEMINI_2_5_FLASH,
-                    messages=[{"role": "user", "content": "Say OK"}],
-                    max_tokens=5,
-                )
-                info["llm"] = "OK"
-                info["response"] = str(r.chat_output)[:100]
-                info["payment_hash"] = str(getattr(r, "payment_hash", None))
-            except Exception as e:
-                info["llm"] = f"FAIL: {e}"
-        except Exception as e:
-            info["client"] = f"FAIL: {e}"
-    return jsonify(info)
+        "etherscan_key": "SET" if ETHERSCAN_KEY else "FREE TIER",
+        "chains_supported": len(ETHERSCAN_V2_CHAINS),
+        "chains": [c["name"] for c in ETHERSCAN_V2_CHAINS],
+    })
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    print(f"🛡️  Server on http://0.0.0.0:{port} | SDK:{OG_AVAILABLE}", flush=True)
+    print(f"🛡️  Server on http://0.0.0.0:{port} | SDK:{OG_AVAILABLE} | Chains:{len(ETHERSCAN_V2_CHAINS)}", flush=True)
     app.run(host="0.0.0.0", port=port, debug=False)
