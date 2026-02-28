@@ -34,22 +34,34 @@ og_client = None
 def get_og_client():
     global og_client
     if og_client is not None:
+        print("✅ Using cached OG client", flush=True)
         return og_client
     if not OG_AVAILABLE:
+        print("⚠️  OG SDK not available, using mock", flush=True)
         return None
 
     private_key = os.environ.get("OG_PRIVATE_KEY")
-    if not private_key or private_key == "0xYOUR_PRIVATE_KEY_HERE":
+    if not private_key:
+        print("⚠️  OG_PRIVATE_KEY not set in environment", flush=True)
         return None
+    if private_key == "0xYOUR_PRIVATE_KEY_HERE":
+        print("⚠️  OG_PRIVATE_KEY is still the placeholder value", flush=True)
+        return None
+
+    print(f"🔑 OG_PRIVATE_KEY found (starts with {private_key[:6]}...)", flush=True)
 
     try:
         og_client = og.Client(private_key=private_key)
+        print("✅ OpenGradient client created successfully", flush=True)
         try:
             og_client.llm.ensure_opg_approval(opg_amount=5.0)
-        except Exception:
-            pass
+            print("✅ $OPG approval confirmed", flush=True)
+        except Exception as e:
+            print(f"⚠️  Permit2 skipped: {e}", flush=True)
         return og_client
-    except Exception:
+    except Exception as e:
+        print(f"❌ Client creation failed: {e}", flush=True)
+        traceback.print_exc()
         return None
 
 
