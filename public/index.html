@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verifiable Wallet Transaction Explainer — OpenGradient</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="container">
+
+    <!-- ═══════ HEADER ═══════ -->
+    <header class="header">
+      <div class="header__logo">
+        <span class="pulse-dot"></span>
+        OpenGradient Verified
+      </div>
+      <h1 class="header__title">
+        Verifiable Wallet<br />Transaction Explainer
+      </h1>
+      <p class="header__subtitle">
+        Paste any transaction hash and get a plain-English explanation — 
+        with <strong>cryptographic proof</strong> from OpenGradient's decentralized AI network.
+      </p>
+    </header>
+
+    <!-- ═══════ HOW IT WORKS ═══════ -->
+    <div class="how-it-works">
+      <div class="how-step">
+        <div class="how-step__icon">📋</div>
+        <div class="how-step__label">Paste Hash</div>
+        <div class="how-step__sublabel">tx hash input</div>
+      </div>
+      <div class="how-step">
+        <div class="how-step__icon">🔗</div>
+        <div class="how-step__label">Fetch Data</div>
+        <div class="how-step__sublabel">blockchain rpc</div>
+      </div>
+      <div class="how-step">
+        <div class="how-step__icon">🛡️</div>
+        <div class="how-step__label">AI in TEE</div>
+        <div class="how-step__sublabel">opengradient x402</div>
+      </div>
+      <div class="how-step">
+        <div class="how-step__icon">✅</div>
+        <div class="how-step__label">Verified Proof</div>
+        <div class="how-step__sublabel">on-chain settlement</div>
+      </div>
+    </div>
+
+    <!-- ═══════ INPUT ═══════ -->
+    <div class="input-card">
+      <label class="input-card__label" for="txInput">Transaction Hash</label>
+      <div class="input-card__field">
+        <input
+          type="text"
+          id="txInput"
+          class="input-card__input"
+          placeholder="0x3a1b2c3d4e5f..."
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <button id="analyzeBtn" class="input-card__btn" onclick="analyzeTransaction()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+          </svg>
+          Analyze
+        </button>
+      </div>
+      <div class="example-hash">
+        Try an example: <span onclick="useExample()">0x3a1b2c3d...8e9f0a1b</span>
+      </div>
+    </div>
+
+    <!-- ═══════ ERROR ═══════ -->
+    <div id="errorBox" class="error-box"></div>
+
+    <!-- ═══════ RESULTS ═══════ -->
+    <div id="results" class="results">
+
+      <!-- 1: Transaction Overview -->
+      <div class="result-card">
+        <div class="result-card__header">
+          <div class="result-card__icon result-card__icon--overview">🔍</div>
+          <div class="result-card__title">Transaction Overview</div>
+        </div>
+        <div id="txOverview" class="tx-overview"></div>
+      </div>
+
+      <!-- 2: AI Explanation -->
+      <div class="result-card">
+        <div class="result-card__header">
+          <div class="result-card__icon result-card__icon--explain">💡</div>
+          <div class="result-card__title">Plain English Explanation</div>
+        </div>
+        <div id="explanation" class="result-card__body"></div>
+      </div>
+
+      <!-- 3: Token Transfers -->
+      <div class="result-card" id="transfersCard">
+        <div class="result-card__header">
+          <div class="result-card__icon result-card__icon--transfer">↗️</div>
+          <div class="result-card__title">Token Transfers</div>
+        </div>
+        <div id="transfers"></div>
+      </div>
+
+      <!-- 4: Gas Fees -->
+      <div class="result-card">
+        <div class="result-card__header">
+          <div class="result-card__icon result-card__icon--gas">⛽</div>
+          <div class="result-card__title">Gas Fee Breakdown</div>
+        </div>
+        <div id="gasInfo" class="result-card__body"></div>
+      </div>
+
+      <!-- 5: Verification Proof -->
+      <div class="result-card">
+        <div class="result-card__header">
+          <div class="result-card__icon result-card__icon--proof">🛡️</div>
+          <div class="result-card__title">OpenGradient Verification Proof</div>
+        </div>
+        <div id="proofSection"></div>
+      </div>
+
+    </div>
+
+    <!-- ═══════ FOOTER ═══════ -->
+    <footer class="footer">
+      Powered by <a href="https://opengradient.ai" target="_blank">OpenGradient</a> — Verifiable AI inference via x402
+      <div class="footer__links">
+        <a href="https://docs.opengradient.ai/developers/sdk/" target="_blank">SDK Docs</a>
+        <a href="https://faucet.opengradient.ai" target="_blank">Get $OPG</a>
+        <a href="https://explorer.opengradient.ai" target="_blank">Explorer</a>
+        <a href="https://hub.opengradient.ai" target="_blank">Model Hub</a>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- ═══════ JAVASCRIPT ═══════ -->
+  <script>
+    // ── DOM ──
+    const txInput = document.getElementById("txInput");
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const errorBox = document.getElementById("errorBox");
+    const resultsSection = document.getElementById("results");
+
+    txInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") analyzeTransaction();
+    });
+
+    function useExample() {
+      txInput.value = "0x3a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b";
+      txInput.focus();
+    }
+
+    // ── Main function ──
+    async function analyzeTransaction() {
+      const txHash = txInput.value.trim();
+      hideError();
+      resultsSection.classList.remove("visible");
+
+      if (!txHash) return showError("Please enter a transaction hash.");
+      if (!txHash.startsWith("0x") || txHash.length < 10) {
+        return showError("Invalid hash — must start with '0x' and be valid hex.");
+      }
+
+      setLoading(true);
+
+      try {
+        const res = await fetch("/analyze-transaction", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ txHash }),
+        });
+        const data = await res.json();
+        if (!res.ok) return showError(data.error || "Server error.");
+        renderResults(data);
+      } catch (err) {
+        console.error(err);
+        showError("Could not connect to server. Is it running on localhost:3000?");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // ── Render results ──
+    function renderResults(data) {
+      const tx = data.transaction;
+
+      // 1. Overview grid
+      document.getElementById("txOverview").innerHTML = `
+        <div class="tx-field tx-field--full">
+          <div class="tx-field__label">Transaction Hash</div>
+          <div class="tx-field__value tx-field__value--hash">${tx.hash}</div>
+        </div>
+        <div class="tx-field">
+          <div class="tx-field__label">From</div>
+          <div class="tx-field__value">${shorten(tx.from)}</div>
+        </div>
+        <div class="tx-field">
+          <div class="tx-field__label">To</div>
+          <div class="tx-field__value">${shorten(tx.to)}</div>
+        </div>
+        <div class="tx-field">
+          <div class="tx-field__label">Value</div>
+          <div class="tx-field__value tx-field__value--amount">${tx.value}</div>
+        </div>
+        <div class="tx-field">
+          <div class="tx-field__label">Status</div>
+          <div class="tx-field__value tx-field__value--success">● ${tx.status}</div>
+        </div>
+        <div class="tx-field">
+          <div class="tx-field__label">Block</div>
+          <div class="tx-field__value">#${tx.block.toLocaleString()}</div>
+        </div>
+        <div class="tx-field">
+          <div class="tx-field__label">Gas Fee</div>
+          <div class="tx-field__value tx-field__value--amount">${tx.gasFee}</div>
+        </div>
+      `;
+
+      // 2. Explanation
+      document.getElementById("explanation").innerHTML = formatMarkdown(data.explanation);
+
+      // 3. Token transfers
+      const card = document.getElementById("transfersCard");
+      if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+        card.style.display = "block";
+        let html = `<table class="transfers-list"><thead><tr><th>Token</th><th>Amount</th><th>To</th></tr></thead><tbody>`;
+        tx.tokenTransfers.forEach((t) => {
+          const cls = t.token === "USDT" ? "usdt" : t.token === "WETH" ? "weth" : "default";
+          html += `<tr>
+            <td><span class="token-badge token-badge--${cls}">${t.token}</span></td>
+            <td>${t.amount}</td>
+            <td>${shorten(t.to)}</td>
+          </tr>`;
+        });
+        html += "</tbody></table>";
+        document.getElementById("transfers").innerHTML = html;
+      } else {
+        card.style.display = "none";
+      }
+
+      // 4. Gas info
+      document.getElementById("gasInfo").innerHTML = `
+        <p>Gas Used: <strong>${tx.gasUsed.toLocaleString()} units</strong></p>
+        <p>Gas Price: <strong>${tx.gasPrice}</strong></p>
+        <p>Total Fee: <strong>${tx.gasFee}</strong></p>
+      `;
+
+      // 5. Proof
+      const proof = data.proof;
+      const isLive = proof.mode === "LIVE";
+      document.getElementById("proofSection").innerHTML = `
+        <div class="proof-verified" style="${isLive ? '' : 'background:var(--amber-dim);border-color:var(--amber);color:var(--amber);'}">
+          <span class="check-icon">${isLive ? '✓' : '⚠'}</span>
+          ${isLive ? 'TEE Verified · On-Chain Settlement' : 'MOCK MODE · Set OG_PRIVATE_KEY for live'}
+        </div>
+        <div class="proof-grid">
+          <div class="proof-field proof-field--full">
+            <div class="proof-field__label">Payment Hash (On-Chain Proof)</div>
+            <div class="proof-field__value">${proof.paymentHash}</div>
+          </div>
+          <div class="proof-field">
+            <div class="proof-field__label">Model</div>
+            <div class="proof-field__value">${proof.model}</div>
+          </div>
+          <div class="proof-field">
+            <div class="proof-field__label">TEE Verified</div>
+            <div class="proof-field__value">${proof.verifiedByTEE ? '✅ Yes' : '❌ No'}</div>
+          </div>
+          <div class="proof-field">
+            <div class="proof-field__label">Settlement Network</div>
+            <div class="proof-field__value">${proof.settlementNetwork}</div>
+          </div>
+          <div class="proof-field">
+            <div class="proof-field__label">Inference Network</div>
+            <div class="proof-field__value">${proof.inferenceNetwork}</div>
+          </div>
+          <div class="proof-field proof-field--full">
+            <div class="proof-field__label">Verify on Explorer</div>
+            <div class="proof-field__value">
+              <a href="${proof.explorerUrl}" target="_blank">${proof.explorerUrl}</a>
+            </div>
+          </div>
+        </div>
+        ${proof.note ? `<div class="proof-note">ℹ️ ${proof.note}</div>` : ''}
+      `;
+
+      resultsSection.classList.add("visible");
+      resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    // ── Helpers ──
+    function shorten(addr) {
+      if (!addr || addr.length < 14) return addr;
+      return addr.slice(0, 8) + "···" + addr.slice(-6);
+    }
+
+    function formatMarkdown(text) {
+      let html = text
+        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+        .replace(/^## (.+)$/gm, '<p style="color:var(--text-primary);font-weight:600;margin-top:14px;font-size:0.95rem;">$1</p>')
+        .replace(/\n\n/g, "</p><p>")
+        .replace(/\n- /g, "<br/>• ")
+        .replace(/\n/g, "<br/>");
+      if (!html.startsWith("<p")) html = "<p>" + html + "</p>";
+      return html;
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.add("visible");
+    }
+
+    function hideError() {
+      errorBox.textContent = "";
+      errorBox.classList.remove("visible");
+    }
+
+    function setLoading(on) {
+      if (on) {
+        analyzeBtn.disabled = true;
+        analyzeBtn.innerHTML = '<span class="spinner"></span> Analyzing…';
+      } else {
+        analyzeBtn.disabled = false;
+        analyzeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg> Analyze`;
+      }
+    }
+  </script>
+
+</body>
+</html>

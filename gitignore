@@ -1,0 +1,15 @@
+venv/
+node_modules/
+__pycache__/
+*.pyc
+.env
+dist/
+build/
+target/
+*.wasm
+*.ptau
+*.zkey
+*.r1cs
+*.sym
+*.log
+.DS_Store
