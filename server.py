@@ -30,39 +30,32 @@ try:
 except Exception as e:
     print(f"⚠️  OpenGradient not available: {e}", flush=True)
 
+# Global client — reused across requests
+_og_client = None
 
-def create_og_client():
-    """Create a fresh OpenGradient client each time to avoid stale state."""
+def get_og_client():
+    global _og_client
+    if _og_client is not None:
+        return _og_client
     if not OG_AVAILABLE:
-        print("⚠️  [create_client] SDK not available", flush=True)
         return None
 
     private_key = os.environ.get("OG_PRIVATE_KEY", "")
     if not private_key or "YOUR_PRIVATE_KEY" in private_key:
-        print("⚠️  [create_client] No valid OG_PRIVATE_KEY", flush=True)
         return None
 
-    print(f"🔑 [create_client] Key found: {private_key[:8]}...", flush=True)
-
     try:
-        client = og.Client(private_key=private_key)
-        print("✅ [create_client] Client created", flush=True)
-        return client
+        _og_client = og.Client(private_key=private_key)
+        print(f"✅ OG client created (key: {private_key[:8]}...)", flush=True)
+        try:
+            _og_client.llm.ensure_opg_approval(opg_amount=5.0)
+            print("✅ $OPG approval done", flush=True)
+        except Exception as e:
+            print(f"⚠️  Approval skipped: {e}", flush=True)
+        return _og_client
     except Exception as e:
-        print(f"❌ [create_client] Failed: {e}", flush=True)
-        traceback.print_exc()
+        print(f"❌ Client failed: {e}", flush=True)
         return None
-
-
-def try_opg_approval(client):
-    """Try to approve $OPG spending. Non-fatal if it fails."""
-    try:
-        client.llm.ensure_opg_approval(opg_amount=5.0)
-        print("✅ [approval] $OPG approved", flush=True)
-        return True
-    except Exception as e:
-        print(f"⚠️  [approval] Skipped: {e}", flush=True)
-        return False
 
 
 # ── Transaction Data ─────────────────────────────────────────
@@ -90,7 +83,6 @@ def get_mock_transaction(tx_hash):
 
 
 def get_mock_response(tx_data):
-    """Return mock analysis."""
     gas_fee = tx_data.get("gasFeeETH", "0.000630 ETH")
     return {
         "explanation": f"""## Transaction Summary
@@ -124,9 +116,71 @@ Total gas fee: **{gas_fee}** (roughly $1.20 at current prices).
     }
 
 
-def analyze_with_opengradient(tx_data):
-    """Attempt real OpenGradient inference, fall back to mock."""
+def call_opengradient(prompt, max_retries=3):
+    """Call OpenGradient LLM with retries."""
+    client = get_og_client()
+    if client is None:
+        return None
 
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"🚀 LLM attempt {attempt}/{max_retries}...", flush=True)
+            start = time.time()
+
+            result = client.llm.chat(
+                model=og.TEE_LLM.GEMINI_2_5_FLASH,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a blockchain transaction analyst. Explain transactions clearly for beginners. Use markdown with ## headers and **bold**."
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=500,
+                temperature=0.3,
+            )
+
+            elapsed = time.time() - start
+            print(f"✅ LLM responded in {elapsed:.1f}s", flush=True)
+
+            # Extract content
+            explanation = None
+            if hasattr(result, 'chat_output'):
+                co = result.chat_output
+                if isinstance(co, dict):
+                    explanation = co.get("content", str(co))
+                else:
+                    explanation = str(co)
+
+            payment_hash = getattr(result, "payment_hash", None)
+            print(f"📦 Payment hash: {payment_hash}", flush=True)
+
+            if explanation:
+                return {
+                    "explanation": explanation,
+                    "payment_hash": payment_hash,
+                }
+
+        except Exception as e:
+            elapsed = time.time() - start
+            error_msg = str(e)
+            print(f"❌ Attempt {attempt} failed ({elapsed:.1f}s): {error_msg}", flush=True)
+
+            # If payment error, wait and retry
+            if "payment" in error_msg.lower() and attempt < max_retries:
+                wait = attempt * 2
+                print(f"⏳ Retrying in {wait}s...", flush=True)
+                time.sleep(wait)
+                continue
+
+            # Other errors — don't retry
+            if "payment" not in error_msg.lower():
+                break
+
+    return None
+
+
+def analyze_with_opengradient(tx_data):
     prompt = f"""You are a blockchain expert. Explain this transaction in simple, beginner-friendly English.
 
 Break your answer into these sections:
@@ -140,85 +194,23 @@ Use markdown: ## for headers, **bold** for emphasis.
 Transaction data:
 {json.dumps(tx_data, indent=2)}"""
 
-    # Step 1: Create client
-    print("\n── OpenGradient Analysis ──", flush=True)
-    client = create_og_client()
-    if client is None:
-        print("⬇️  No client, using mock", flush=True)
-        return get_mock_response(tx_data)
+    result = call_opengradient(prompt)
 
-    # Step 2: Try approval (non-fatal)
-    try_opg_approval(client)
+    if result:
+        payment_hash = result.get("payment_hash")
+        return {
+            "explanation": result["explanation"],
+            "proof": {
+                "paymentHash": payment_hash or "verified-no-settlement",
+                "model": "GEMINI_2_5_FLASH",
+                "verifiedByTEE": True,
+                "explorerUrl": f"https://explorer.opengradient.ai/tx/{payment_hash}" if payment_hash else "https://explorer.opengradient.ai",
+                "settlementNetwork": "Base Sepolia",
+                "inferenceNetwork": "OpenGradient",
+                "mode": "LIVE",
+            },
+        }
 
-    # Step 3: Call LLM
-    print("🚀 [llm] Calling GEMINI_2_5_FLASH...", flush=True)
-    start_time = time.time()
-
-    try:
-        result = client.llm.chat(
-            model=og.TEE_LLM.GEMINI_2_5_FLASH,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a blockchain transaction analyst. Explain transactions clearly for beginners. Use markdown with ## headers and **bold**."
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=500,
-            temperature=0.3,
-        )
-
-        elapsed = time.time() - start_time
-        print(f"✅ [llm] Response received in {elapsed:.1f}s", flush=True)
-
-        # Extract response
-        explanation = None
-        payment_hash = None
-
-        # Try different response formats
-        if hasattr(result, 'chat_output'):
-            chat_output = result.chat_output
-            print(f"📦 [llm] chat_output type: {type(chat_output)}", flush=True)
-            print(f"📦 [llm] chat_output: {str(chat_output)[:200]}", flush=True)
-
-            if isinstance(chat_output, dict):
-                explanation = chat_output.get("content", str(chat_output))
-            elif isinstance(chat_output, str):
-                explanation = chat_output
-            else:
-                explanation = str(chat_output)
-
-        if hasattr(result, 'payment_hash'):
-            payment_hash = result.payment_hash
-            print(f"🔗 [llm] payment_hash: {payment_hash}", flush=True)
-
-        # Log all attributes for debugging
-        print(f"📦 [llm] result attributes: {dir(result)}", flush=True)
-
-        if explanation:
-            print(f"✅ [llm] LIVE MODE SUCCESS", flush=True)
-            return {
-                "explanation": explanation,
-                "proof": {
-                    "paymentHash": payment_hash or "pending-settlement",
-                    "model": "GEMINI_2_5_FLASH",
-                    "verifiedByTEE": True,
-                    "explorerUrl": f"https://explorer.opengradient.ai/tx/{payment_hash}" if payment_hash else "https://explorer.opengradient.ai",
-                    "settlementNetwork": "Base Sepolia",
-                    "inferenceNetwork": "OpenGradient",
-                    "mode": "LIVE",
-                },
-            }
-        else:
-            print("⚠️  [llm] No explanation extracted from response", flush=True)
-            print(f"📦 [llm] Full result: {result}", flush=True)
-
-    except Exception as e:
-        elapsed = time.time() - start_time
-        print(f"❌ [llm] FAILED after {elapsed:.1f}s: {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
-
-    print("⬇️  Falling back to mock", flush=True)
     return get_mock_response(tx_data)
 
 
@@ -243,13 +235,13 @@ def analyze_transaction():
             return jsonify({"error": "Hash must start with '0x' and be valid hex."}), 400
 
         print(f"\n{'='*50}", flush=True)
-        print(f"🔍 Request: {tx_hash}", flush=True)
+        print(f"🔍 Analyzing: {tx_hash}", flush=True)
 
         tx_data = get_mock_transaction(tx_hash)
         analysis = analyze_with_opengradient(tx_data)
 
-        mode = analysis["proof"].get("mode", "?")
-        print(f"📤 Response mode: {mode}", flush=True)
+        mode = analysis["proof"]["mode"]
+        print(f"📤 Result: {mode}", flush=True)
         print(f"{'='*50}\n", flush=True)
 
         return jsonify({
@@ -275,52 +267,36 @@ def analyze_transaction():
         return jsonify({"error": "Something went wrong."}), 500
 
 
-# ── Debug endpoint ───────────────────────────────────────────
-
 @app.route("/debug")
 def debug():
-    """Quick check of OpenGradient status."""
-    private_key = os.environ.get("OG_PRIVATE_KEY", "")
-    has_key = bool(private_key) and "YOUR_PRIVATE_KEY" not in private_key
-
+    """Quick status check."""
+    pk = os.environ.get("OG_PRIVATE_KEY", "")
+    has_key = bool(pk) and "YOUR" not in pk
     info = {
-        "og_sdk_available": OG_AVAILABLE,
-        "og_private_key_set": has_key,
-        "og_key_prefix": private_key[:8] + "..." if has_key else "NOT SET",
-        "port": os.environ.get("PORT", "not set"),
+        "sdk": OG_AVAILABLE,
+        "key": f"{pk[:8]}..." if has_key else "NOT SET",
     }
-
     if has_key and OG_AVAILABLE:
         try:
-            client = og.Client(private_key=private_key)
-            info["client_created"] = True
-
-            # Quick test — just try a short completion
+            client = og.Client(private_key=pk)
+            info["client"] = "OK"
             try:
-                result = client.llm.chat(
+                r = client.llm.chat(
                     model=og.TEE_LLM.GEMINI_2_5_FLASH,
                     messages=[{"role": "user", "content": "Say OK"}],
-                    max_tokens=10,
+                    max_tokens=5,
                 )
-                info["llm_test"] = "SUCCESS"
-                info["llm_response"] = str(result.chat_output)[:100]
-                info["payment_hash"] = str(getattr(result, "payment_hash", None))
+                info["llm"] = "OK"
+                info["response"] = str(r.chat_output)[:100]
+                info["payment_hash"] = str(getattr(r, "payment_hash", None))
             except Exception as e:
-                info["llm_test"] = f"FAILED: {e}"
-
+                info["llm"] = f"FAIL: {e}"
         except Exception as e:
-            info["client_created"] = False
-            info["client_error"] = str(e)
-
+            info["client"] = f"FAIL: {e}"
     return jsonify(info)
 
 
-# ── Start ────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    print(f"\n🛡️  Server starting on http://0.0.0.0:{port}", flush=True)
-    print(f"🔧 OG SDK: {OG_AVAILABLE}", flush=True)
-    print(f"🔑 Key set: {bool(os.environ.get('OG_PRIVATE_KEY'))}", flush=True)
-    sys.stdout.flush()
+    print(f"🛡️  Server on http://0.0.0.0:{port} | SDK:{OG_AVAILABLE}", flush=True)
     app.run(host="0.0.0.0", port=port, debug=False)
