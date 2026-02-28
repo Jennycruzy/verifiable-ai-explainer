@@ -1,15 +1,13 @@
 """
 server.py — Verifiable Wallet Transaction Explainer
 Flask backend using OpenGradient SDK for verifiable AI inference.
-
-Run locally:  python server.py
-Run for prod: gunicorn server:app --bind 0.0.0.0:3000
 """
 
 import os
 import json
 import secrets
 import traceback
+import sys
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -19,6 +17,17 @@ load_dotenv()
 app = Flask(__name__, static_folder="public", static_url_path="")
 CORS(app)
 
+# ── Try importing OpenGradient (optional) ────────────────────
+OG_AVAILABLE = False
+try:
+    import opengradient as og
+    OG_AVAILABLE = True
+    print("✅ OpenGradient SDK imported successfully", flush=True)
+except ImportError as e:
+    print(f"⚠️  OpenGradient SDK not available: {e}", flush=True)
+except Exception as e:
+    print(f"⚠️  OpenGradient import error: {e}", flush=True)
+
 # ── OpenGradient Client ─────────────────────────────────────
 og_client = None
 
@@ -26,30 +35,24 @@ def get_og_client():
     global og_client
     if og_client is not None:
         return og_client
+    if not OG_AVAILABLE:
+        return None
 
     private_key = os.environ.get("OG_PRIVATE_KEY")
     if not private_key or private_key == "0xYOUR_PRIVATE_KEY_HERE":
-        print("⚠️  No OG_PRIVATE_KEY — running in MOCK MODE")
         return None
 
     try:
-        import opengradient as og
         og_client = og.Client(private_key=private_key)
-        print("✅ OpenGradient client initialized")
-
         try:
             og_client.llm.ensure_opg_approval(opg_amount=5.0)
-            print("✅ $OPG Permit2 approval confirmed")
-        except Exception as e:
-            print(f"⚠️  Permit2 approval skipped: {e}")
-
+        except Exception:
+            pass
         return og_client
-    except Exception as e:
-        print(f"⚠️  OpenGradient init failed — MOCK MODE: {e}")
+    except Exception:
         return None
 
 
-# ── Mock Transaction Data ────────────────────────────────────
 def get_mock_transaction(tx_hash):
     return {
         "hash": tx_hash,
@@ -63,23 +66,16 @@ def get_mock_transaction(tx_hash):
         "status": "Success",
         "timestamp": "2025-01-15T10:30:00Z",
         "tokenTransfers": [
-            {
-                "token": "USDT",
-                "amount": "200",
-                "from": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-                "to": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-            },
-            {
-                "token": "WETH",
-                "amount": "0.5",
-                "from": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-                "to": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-            },
+            {"token": "USDT", "amount": "200",
+             "from": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+             "to": "0xdAC17F958D2ee523a2206206994597C13D831ec7"},
+            {"token": "WETH", "amount": "0.5",
+             "from": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+             "to": "0x71C7656EC7ab88b098defB751B7401B5f6d8976F"},
         ],
     }
 
 
-# ── OpenGradient LLM Analysis ───────────────────────────────
 def analyze_with_opengradient(tx_data):
     prompt = f"""You are a blockchain expert. Explain this transaction in simple, beginner-friendly English.
 
@@ -96,26 +92,19 @@ Transaction data:
 
     client = get_og_client()
 
-    if client is not None:
+    if client is not None and OG_AVAILABLE:
         try:
-            import opengradient as og
-
             result = client.llm.chat(
                 model=og.TEE_LLM.GEMINI_2_5_FLASH,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a blockchain transaction analyst. Explain transactions clearly for beginners. Use markdown with ## headers and **bold**.",
-                    },
+                    {"role": "system", "content": "You are a blockchain transaction analyst. Explain transactions clearly for beginners. Use markdown with ## headers and **bold**."},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=500,
                 temperature=0.3,
             )
-
             explanation = result.chat_output.get("content", "No response received")
             payment_hash = getattr(result, "payment_hash", None)
-
             return {
                 "explanation": explanation,
                 "proof": {
@@ -129,12 +118,11 @@ Transaction data:
                 },
             }
         except Exception as e:
-            print(f"❌ OpenGradient error: {e}")
-            traceback.print_exc()
+            print(f"❌ OpenGradient error: {e}", flush=True)
 
-    # ── Mock fallback ──
     gas_fee = tx_data.get("gasFeeETH", "0.000630 ETH")
-    mock_explanation = f"""## Transaction Summary
+    return {
+        "explanation": f"""## Transaction Summary
 This transaction was sent from wallet 0x71C7...976F to contract 0xA0b8...eB48.
 
 ## What Happened
@@ -147,16 +135,12 @@ This looks like a **token swap** — the user exchanged ETH/USDT for WETH throug
 ## Gas Fees
 The transaction used **21,000 gas units** at a price of **30 gwei per unit**.
 Total gas fee: **{gas_fee}** (roughly $1.20 at current prices).
-This is a standard gas cost — nothing unusual.
 
 ## Suspicion Check
 ✅ **No suspicious patterns detected.**
 - The gas fee is within normal range
 - The addresses are not flagged
-- The transaction pattern is consistent with a typical DEX swap"""
-
-    return {
-        "explanation": mock_explanation,
+- The transaction pattern is consistent with a typical DEX swap""",
         "proof": {
             "paymentHash": "0x" + secrets.token_hex(32),
             "model": "GEMINI_2_5_FLASH (mock)",
@@ -165,7 +149,6 @@ This is a standard gas cost — nothing unusual.
             "settlementNetwork": "Base Sepolia",
             "inferenceNetwork": "OpenGradient Testnet",
             "mode": "MOCK",
-            "note": "Mock mode. Set OG_PRIVATE_KEY env var for live verifiable inference.",
         },
     }
 
@@ -176,29 +159,22 @@ This is a standard gas cost — nothing unusual.
 def index():
     return send_from_directory("public", "index.html")
 
-
 @app.route("/<path:path>")
 def static_files(path):
     return send_from_directory("public", path)
-
 
 @app.route("/analyze-transaction", methods=["POST"])
 def analyze_transaction():
     try:
         data = request.get_json()
         tx_hash = data.get("txHash", "").strip() if data else ""
-
         if not tx_hash:
             return jsonify({"error": "Please provide a transaction hash."}), 400
         if not tx_hash.startswith("0x") or len(tx_hash) < 10:
             return jsonify({"error": "Hash must start with '0x' and be valid hex."}), 400
 
-        print(f"\n🔍 Analyzing: {tx_hash}")
-
         tx_data = get_mock_transaction(tx_hash)
         analysis = analyze_with_opengradient(tx_data)
-        mode = analysis["proof"].get("mode", "UNKNOWN")
-        print(f"🛡️  Done [{mode}]")
 
         return jsonify({
             "success": True,
@@ -218,24 +194,13 @@ def analyze_transaction():
             "proof": analysis["proof"],
         })
     except Exception as e:
-        print(f"❌ Error: {e}")
-        traceback.print_exc()
+        print(f"❌ Error: {e}", flush=True)
         return jsonify({"error": "Something went wrong."}), 500
 
 
 # ── Start ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 3000))
-    client = get_og_client()
-    mode = "LIVE ✅" if client else "MOCK 🧪"
-
-    print(f"""
-  ╔═══════════════════════════════════════════════════════════╗
-  ║  🛡️  Verifiable Wallet Transaction Explainer              ║
-  ║  ⚡ Powered by OpenGradient x402                          ║
-  ║  Mode:    {mode:<47s} ║
-  ║  Server:  http://localhost:{port:<29d} ║
-  ╚═══════════════════════════════════════════════════════════╝
-    """)
+    port = int(os.environ.get("PORT", 10000))
+    print(f"\n🛡️  Server starting on http://0.0.0.0:{port}\n", flush=True)
     app.run(host="0.0.0.0", port=port, debug=False)
