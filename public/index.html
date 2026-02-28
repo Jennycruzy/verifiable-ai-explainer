@@ -256,9 +256,13 @@
       const proof = data.proof;
       const isLive = proof.mode === "LIVE";
       document.getElementById("proofSection").innerHTML = `
-        <div class="proof-verified" style="${isLive ? '' : 'background:var(--amber-dim);border-color:var(--amber);color:var(--amber);'}">
-          <span class="check-icon">${isLive ? '✓' : '⚠'}</span>
-          ${isLive ? 'TEE Verified · On-Chain Settlement' : 'MOCK MODE · Set OG_PRIVATE_KEY for live'}
+        <div style="padding:16px 24px;border-radius:12px;margin-bottom:20px;font-weight:700;font-size:1.1rem;text-align:center;letter-spacing:0.5px;
+          ${isLive
+            ? 'background:#00e68a22;border:2px solid #00e68a;color:#00e68a;'
+            : 'background:#f5a62322;border:2px solid #f5a623;color:#f5a623;'
+          }">
+          <span style="font-size:1.4rem;margin-right:8px;">${isLive ? '✅' : '⚠️'}</span>
+          ${isLive ? 'LIVE — Verified by OpenGradient TEE' : 'MOCK MODE — Demo Data'}
         </div>
         <div class="proof-grid">
           <div class="proof-field proof-field--full">
