@@ -11,6 +11,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -180,8 +181,7 @@ def resolve_token(address, raw_amount):
 
 ETHERSCAN_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
 
-# Direct API chains — these have their own API endpoints
-# Used as fallback when Etherscan V2 blocks paid-tier chains
+# Direct API chains — paid-tier on V2, so we use their own explorer APIs
 DIRECT_CHAINS = [
     {"name": "Base",            "chainid": 8453,    "symbol": "ETH",  "explorer": "https://basescan.org",              "api": "https://api.basescan.org/api",             "testnet": False},
     {"name": "OP Mainnet",      "chainid": 10,      "symbol": "ETH",  "explorer": "https://optimistic.etherscan.io",   "api": "https://api-optimistic.etherscan.io/api",  "testnet": False},
@@ -193,8 +193,10 @@ DIRECT_CHAINS = [
     {"name": "Avalanche Fuji",  "chainid": 43113,   "symbol": "AVAX", "explorer": "https://testnet.snowscan.xyz",      "api": "https://api-testnet.snowscan.xyz/api",     "testnet": True},
 ]
 
-# V2 API chains — use Etherscan V2 unified endpoint
-V2_CHAINS = [
+# V2 API chains — free tier on Etherscan V2
+# Split into free-tier confirmed and paid-only for clarity
+V2_FREE_CHAINS = [
+    # These are confirmed free-tier on Etherscan V2 docs
     {"name": "Ethereum",        "chainid": 1,        "symbol": "ETH",    "explorer": "https://etherscan.io",              "testnet": False},
     {"name": "Arbitrum One",    "chainid": 42161,    "symbol": "ETH",    "explorer": "https://arbiscan.io",               "testnet": False},
     {"name": "Polygon",         "chainid": 137,      "symbol": "POL",    "explorer": "https://polygonscan.com",           "testnet": False},
@@ -208,8 +210,6 @@ V2_CHAINS = [
     {"name": "Moonbeam",        "chainid": 1284,     "symbol": "GLMR",   "explorer": "https://moonbeam.moonscan.io",      "testnet": False},
     {"name": "Moonriver",       "chainid": 1285,     "symbol": "MOVR",   "explorer": "https://moonriver.moonscan.io",     "testnet": False},
     {"name": "opBNB",           "chainid": 204,      "symbol": "BNB",    "explorer": "https://opbnb.bscscan.com",         "testnet": False},
-    {"name": "Fantom",          "chainid": 250,      "symbol": "FTM",    "explorer": "https://ftmscan.com",               "testnet": False},
-    {"name": "Cronos",          "chainid": 25,       "symbol": "CRO",    "explorer": "https://cronoscan.com",             "testnet": False},
     {"name": "Taiko",           "chainid": 167000,   "symbol": "ETH",    "explorer": "https://taikoscan.io",              "testnet": False},
     {"name": "BitTorrent",      "chainid": 199,      "symbol": "BTT",    "explorer": "https://bttcscan.com",              "testnet": False},
     {"name": "XDC",             "chainid": 50,       "symbol": "XDC",    "explorer": "https://xdcscan.io",                "testnet": False},
@@ -224,13 +224,15 @@ V2_CHAINS = [
     {"name": "HyperEVM",        "chainid": 999,      "symbol": "HYPE",   "explorer": "https://hyperscan.xyz",             "testnet": False},
     {"name": "Katana",          "chainid": 747474,   "symbol": "ETH",    "explorer": "https://katanascan.xyz",            "testnet": False},
     {"name": "Sei",             "chainid": 1329,     "symbol": "SEI",    "explorer": "https://seiscan.io",                "testnet": False},
-    {"name": "zkSync Era",      "chainid": 324,      "symbol": "ETH",    "explorer": "https://explorer.zksync.io",        "testnet": False},
-    {"name": "Polygon zkEVM",   "chainid": 1101,     "symbol": "ETH",    "explorer": "https://zkevm.polygonscan.com",     "testnet": False},
     {"name": "Memecore",        "chainid": 4352,     "symbol": "MEM",    "explorer": "https://memecorescan.io",           "testnet": False},
     {"name": "Stable",          "chainid": 988,      "symbol": "STB",    "explorer": "https://stablescan.xyz",            "testnet": False},
     {"name": "Plasma",          "chainid": 9745,     "symbol": "ETH",    "explorer": "https://plasmascan.io",             "testnet": False},
     {"name": "MegaETH",         "chainid": 4326,     "symbol": "ETH",    "explorer": "https://megaethscan.io",            "testnet": False},
-    # ── Testnets ──
+    {"name": "zkSync Era",      "chainid": 324,      "symbol": "ETH",    "explorer": "https://explorer.zksync.io",        "testnet": False},
+    {"name": "Polygon zkEVM",   "chainid": 1101,     "symbol": "ETH",    "explorer": "https://zkevm.polygonscan.com",     "testnet": False},
+    {"name": "Fantom",          "chainid": 250,      "symbol": "FTM",    "explorer": "https://ftmscan.com",               "testnet": False},
+    {"name": "Cronos",          "chainid": 25,       "symbol": "CRO",    "explorer": "https://cronoscan.com",             "testnet": False},
+    # ── Testnets (all free tier) ──
     {"name": "Sepolia",             "chainid": 11155111, "symbol": "ETH",  "explorer": "https://sepolia.etherscan.io",       "testnet": True},
     {"name": "Hoodi",               "chainid": 560048,   "symbol": "ETH",  "explorer": "https://hoodi.etherscan.io",         "testnet": True},
     {"name": "Arbitrum Sepolia",    "chainid": 421614,   "symbol": "ETH",  "explorer": "https://sepolia.arbiscan.io",        "testnet": True},
@@ -262,19 +264,38 @@ V2_CHAINS = [
     {"name": "MegaETH Testnet",     "chainid": 6342,     "symbol": "ETH",  "explorer": "https://testnet.megaethscan.io",     "testnet": True},
 ]
 
-ALL_CHAINS = DIRECT_CHAINS + V2_CHAINS
+ALL_CHAINS = DIRECT_CHAINS + V2_FREE_CHAINS
 
 print(f"📡 {len(ALL_CHAINS)} chains | {len(KNOWN_TOKENS)} tokens", flush=True)
 
 
-# ── Fetch helpers ────────────────────────────────────────────
+# ── Rate limiter for Etherscan V2 (free tier: 5 calls/sec) ──
+_v2_lock = threading.Lock()
+_v2_last_call = 0.0
+V2_MIN_INTERVAL = 0.22  # ~4.5 calls/sec to stay under 5/sec limit
 
-def _http_get(url, timeout=8):
-    """Simple HTTP GET returning parsed JSON."""
+def _rate_limited_get(url, timeout=10):
+    """HTTP GET with rate limiting for Etherscan V2 calls."""
+    global _v2_last_call
+    with _v2_lock:
+        now = time.time()
+        wait = V2_MIN_INTERVAL - (now - _v2_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        _v2_last_call = time.time()
     req = urllib.request.Request(url, headers={"User-Agent": "WalletExplainer/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
 
+
+def _http_get(url, timeout=10):
+    """Simple HTTP GET (no rate limiting — for direct API calls)."""
+    req = urllib.request.Request(url, headers={"User-Agent": "WalletExplainer/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+# ── Fetch helpers ────────────────────────────────────────────
 
 def _parse_tx(result, receipt, chain):
     """Parse raw JSON-RPC tx + receipt into our standard format."""
@@ -337,67 +358,93 @@ def _fetch_direct(tx_hash, chain):
             return None
         data2 = _http_get(f"{chain['api']}?module=proxy&action=eth_getTransactionReceipt&txhash={tx_hash}&apikey={api_key}")
         return _parse_tx(result, data2.get("result") or {}, chain)
-    except Exception:
+    except Exception as e:
         return None
 
 
 def _fetch_v2(tx_hash, chain):
-    """Fetch via Etherscan V2 unified API."""
+    """Fetch via Etherscan V2 unified API with rate limiting."""
     api_key = ETHERSCAN_KEY or "YourApiKeyToken"
     chainid = chain["chainid"]
     try:
-        data = _http_get(
+        data = _rate_limited_get(
             f"https://api.etherscan.io/v2/api?chainid={chainid}"
             f"&module=proxy&action=eth_getTransactionByHash"
             f"&txhash={tx_hash}&apikey={api_key}"
         )
+
+        # Check for rate limit or error messages
+        msg = data.get("message", "")
+        if "rate limit" in msg.lower():
+            print(f"⏳ Rate limited on {chain['name']}, retrying...", flush=True)
+            time.sleep(1)
+            data = _rate_limited_get(
+                f"https://api.etherscan.io/v2/api?chainid={chainid}"
+                f"&module=proxy&action=eth_getTransactionByHash"
+                f"&txhash={tx_hash}&apikey={api_key}"
+            )
+
         result = data.get("result")
-        if not result or result == "null" or isinstance(result, str):
+
+        # "result" can be: None, "null" string, error string, or a dict (success)
+        if not result or not isinstance(result, dict):
             return None
-        data2 = _http_get(
+
+        # Got tx — now get receipt (also rate limited)
+        data2 = _rate_limited_get(
             f"https://api.etherscan.io/v2/api?chainid={chainid}"
             f"&module=proxy&action=eth_getTransactionReceipt"
             f"&txhash={tx_hash}&apikey={api_key}"
         )
-        return _parse_tx(result, data2.get("result") or {}, chain)
-    except Exception:
+        receipt = data2.get("result")
+        if not isinstance(receipt, dict):
+            receipt = {}
+
+        return _parse_tx(result, receipt, chain)
+    except Exception as e:
         return None
 
 
 def fetch_real_transaction(tx_hash):
-    """Search all chains in parallel to find the transaction."""
+    """Search chains to find the transaction. Direct chains in parallel, V2 sequentially by batch."""
     print(f"📡 Searching across {len(ALL_CHAINS)} EVM chains...", flush=True)
     start = time.time()
 
-    def check_chain(chain):
-        try:
-            if chain.get("api"):
-                return _fetch_direct(tx_hash, chain)
-            return _fetch_v2(tx_hash, chain)
-        except Exception:
-            return None
-
-    # Batch 1: Priority — Direct API chains + first 10 V2 (major mainnets)
-    batch1 = DIRECT_CHAINS + V2_CHAINS[:10]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(check_chain, c): c for c in batch1}
+    # ── Step 1: Check DIRECT_CHAINS in parallel (separate APIs, no shared rate limit)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_fetch_direct, tx_hash, c): c for c in DIRECT_CHAINS}
         for f in as_completed(futures):
             result = f.result()
             if result:
                 chain = futures[f]
-                print(f"✅ Found on {chain['name']} in {time.time()-start:.1f}s", flush=True)
+                print(f"✅ Found on {chain['name']} (direct) in {time.time()-start:.1f}s", flush=True)
                 return result
 
-    # Batch 2: Remaining V2 chains (newer/smaller chains + all testnets)
-    batch2 = V2_CHAINS[10:]
-    if batch2:
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = {pool.submit(check_chain, c): c for c in batch2}
+    # ── Step 2: Check V2 free-tier chains
+    # Priority mainnets first (most likely), then the rest
+    # V2 calls are rate-limited via _rate_limited_get, so we use limited parallelism
+    priority_v2 = [c for c in V2_FREE_CHAINS if not c.get("testnet", False)][:15]
+    remaining_v2 = [c for c in V2_FREE_CHAINS if c not in priority_v2]
+
+    # Batch 2a: Priority V2 mainnets — 3 workers (each rate-limited)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {pool.submit(_fetch_v2, tx_hash, c): c for c in priority_v2}
+        for f in as_completed(futures):
+            result = f.result()
+            if result:
+                chain = futures[f]
+                print(f"✅ Found on {chain['name']} (v2) in {time.time()-start:.1f}s", flush=True)
+                return result
+
+    # Batch 2b: Remaining V2 chains (smaller mainnets + testnets)
+    if remaining_v2:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = {pool.submit(_fetch_v2, tx_hash, c): c for c in remaining_v2}
             for f in as_completed(futures):
                 result = f.result()
                 if result:
                     chain = futures[f]
-                    print(f"✅ Found on {chain['name']} in {time.time()-start:.1f}s", flush=True)
+                    print(f"✅ Found on {chain['name']} (v2) in {time.time()-start:.1f}s", flush=True)
                     return result
 
     print(f"⚠️  Transaction not found on any chain ({time.time()-start:.1f}s)", flush=True)

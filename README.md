@@ -1,4 +1,4 @@
-# 🛡️ Verifiable Wallet Transaction Explainer
+# 🛡️ Verifiable Hash Transaction Reader
 
 Explains blockchain transactions in plain English with **cryptographic proof** from [OpenGradient](https://opengradient.ai).
 
@@ -7,7 +7,7 @@ Explains blockchain transactions in plain English with **cryptographic proof** f
 ## Project Structure
 
 ```
-verifiable-wallet-explainer/
+verifiable-hash-reader/
 ├── server.py             ← Python Flask backend + OpenGradient SDK
 ├── requirements.txt      ← Python dependencies
 ├── Procfile              ← Render start command
@@ -24,7 +24,7 @@ verifiable-wallet-explainer/
 ## Run Locally
 
 ```bash
-cd verifiable-wallet-explainer
+cd verifiable-hash-reader
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -73,7 +73,7 @@ git push -u origin main
 
 6. Click **Deploy Web Service**
 
-Your site will be live at `https://verifiable-wallet-explainer.onrender.com` in ~2 minutes.
+Your site will be live at `https://hash-reader.onrender.com` in ~2 minutes.
 
 ---
 
