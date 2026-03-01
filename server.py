@@ -283,22 +283,38 @@ def _fetch_v2(h,c):
     except: return None
 
 def fetch_tx(h):
-    print(f"📡 Searching {len(ALL_CHAINS)} chains...",flush=True)
-    for c in DIRECT_CHAINS:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    print(f"📡 Parallel search across {len(ALL_CHAINS)} chains...",flush=True)
+    start=time.time()
+    found=[None]  # mutable container for early exit
+
+    def check_direct(c):
+        if found[0]: return None
         r=_fetch_direct(h,c)
-        if r: print(f"✅ {c['name']} (direct)",flush=True); return r
-    vm=[c for c in V2_CHAINS if not c.get("testnet")]
-    vt=[c for c in V2_CHAINS if c.get("testnet")]
-    for c in vm[:5]:
+        if r: found[0]=r; print(f"✅ {c['name']} (direct) in {time.time()-start:.1f}s",flush=True)
+        return r
+
+    def check_v2(c):
+        if found[0]: return None
         r=_fetch_v2(h,c)
-        if r: print(f"✅ {c['name']}",flush=True); return r
-    for c in vt:
-        r=_fetch_v2(h,c)
-        if r: print(f"✅ {c['name']} (test)",flush=True); return r
-    for c in vm[5:]:
-        r=_fetch_v2(h,c)
-        if r: print(f"✅ {c['name']}",flush=True); return r
-    print("⚠️ Not found",flush=True); return None
+        if r: found[0]=r; print(f"✅ {c['name']} in {time.time()-start:.1f}s",flush=True)
+        return r
+
+    # Search all chains in parallel (max 15 threads to respect API rate limits)
+    with ThreadPoolExecutor(max_workers=15) as pool:
+        futures=[]
+        for c in DIRECT_CHAINS:
+            futures.append(pool.submit(check_direct,c))
+        for c in V2_CHAINS:
+            futures.append(pool.submit(check_v2,c))
+        for f in as_completed(futures):
+            r=f.result()
+            if r:
+                print(f"⚡ Found in {time.time()-start:.1f}s (parallel)",flush=True)
+                return r
+
+    print(f"⚠️ Not found ({time.time()-start:.1f}s)",flush=True)
+    return None
 
 def fallback(h):
     return {"hash":h,"from":"unknown","to":"unknown","value":"unknown","gasUsed":0,
