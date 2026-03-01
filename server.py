@@ -1,5 +1,5 @@
 """
-server.py — Verifiable Wallet Transaction Explainer
+server.py — Verifiable Transaction Hash Reader
 70+ EVM chains, known token detection, direct API fallback for paid-tier chains.
 USDC addresses from official Circle docs. USDT from official Tether deployments.
 """
@@ -36,6 +36,7 @@ except Exception as e:
 
 _og_client = None
 
+
 def get_og_client():
     global _og_client
     if _og_client is not None:
@@ -60,7 +61,7 @@ def get_og_client():
 
 # ══════════════════════════════════════════════════════════════
 # KNOWN TOKENS — Official contract addresses
-# All lowercase for matching. (name, decimals)
+# All lowercase for matching. Returns (name, decimals)
 # ══════════════════════════════════════════════════════════════
 KNOWN_TOKENS = {
     # ── Ethereum (1) ──
@@ -151,7 +152,7 @@ KNOWN_TOKENS = {
 
 
 def resolve_token(address, raw_amount):
-    """Resolve token name and format amount with correct decimals."""
+    """Resolve token name and format amount using KNOWN_TOKENS, with decimal guessing fallback."""
     addr = address.lower()
     info = KNOWN_TOKENS.get(addr)
     if info:
@@ -183,85 +184,83 @@ ETHERSCAN_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
 
 # Direct API chains — paid-tier on V2, so we use their own explorer APIs
 DIRECT_CHAINS = [
-    {"name": "Base",            "chainid": 8453,    "symbol": "ETH",  "explorer": "https://basescan.org",              "api": "https://api.basescan.org/api",             "testnet": False},
-    {"name": "OP Mainnet",      "chainid": 10,      "symbol": "ETH",  "explorer": "https://optimistic.etherscan.io",   "api": "https://api-optimistic.etherscan.io/api",  "testnet": False},
-    {"name": "BNB Smart Chain", "chainid": 56,      "symbol": "BNB",  "explorer": "https://bscscan.com",               "api": "https://api.bscscan.com/api",              "testnet": False},
-    {"name": "Avalanche C",     "chainid": 43114,   "symbol": "AVAX", "explorer": "https://snowscan.xyz",              "api": "https://api.snowscan.xyz/api",             "testnet": False},
-    {"name": "Base Sepolia",    "chainid": 84532,   "symbol": "ETH",  "explorer": "https://sepolia.basescan.org",      "api": "https://api-sepolia.basescan.org/api",     "testnet": True},
-    {"name": "OP Sepolia",      "chainid": 11155420,"symbol": "ETH",  "explorer": "https://sepolia-optimistic.etherscan.io", "api": "https://api-sepolia-optimistic.etherscan.io/api", "testnet": True},
-    {"name": "BNB Testnet",     "chainid": 97,      "symbol": "tBNB", "explorer": "https://testnet.bscscan.com",       "api": "https://api-testnet.bscscan.com/api",      "testnet": True},
-    {"name": "Avalanche Fuji",  "chainid": 43113,   "symbol": "AVAX", "explorer": "https://testnet.snowscan.xyz",      "api": "https://api-testnet.snowscan.xyz/api",     "testnet": True},
+    {"name": "Base",            "chainid": 8453,     "symbol": "ETH",  "explorer": "https://basescan.org",                    "api": "https://api.basescan.org/api",                          "testnet": False},
+    {"name": "OP Mainnet",      "chainid": 10,       "symbol": "ETH",  "explorer": "https://optimistic.etherscan.io",         "api": "https://api-optimistic.etherscan.io/api",               "testnet": False},
+    {"name": "BNB Smart Chain", "chainid": 56,       "symbol": "BNB",  "explorer": "https://bscscan.com",                     "api": "https://api.bscscan.com/api",                           "testnet": False},
+    {"name": "Avalanche C",     "chainid": 43114,    "symbol": "AVAX", "explorer": "https://snowscan.xyz",                    "api": "https://api.snowscan.xyz/api",                          "testnet": False},
+    {"name": "Base Sepolia",    "chainid": 84532,    "symbol": "ETH",  "explorer": "https://sepolia.basescan.org",            "api": "https://api-sepolia.basescan.org/api",                  "testnet": True},
+    {"name": "OP Sepolia",      "chainid": 11155420, "symbol": "ETH",  "explorer": "https://sepolia-optimistic.etherscan.io", "api": "https://api-sepolia-optimistic.etherscan.io/api",       "testnet": True},
+    {"name": "BNB Testnet",     "chainid": 97,       "symbol": "tBNB", "explorer": "https://testnet.bscscan.com",             "api": "https://api-testnet.bscscan.com/api",                   "testnet": True},
+    {"name": "Avalanche Fuji",  "chainid": 43113,    "symbol": "AVAX", "explorer": "https://testnet.snowscan.xyz",            "api": "https://api-testnet.snowscan.xyz/api",                  "testnet": True},
 ]
 
-# V2 API chains — free tier on Etherscan V2
-# Split into free-tier confirmed and paid-only for clarity
+# V2 API chains — free tier on Etherscan V2 (confirmed at docs.etherscan.io/supported-chains)
 V2_FREE_CHAINS = [
-    # These are confirmed free-tier on Etherscan V2 docs
-    {"name": "Ethereum",        "chainid": 1,        "symbol": "ETH",    "explorer": "https://etherscan.io",              "testnet": False},
-    {"name": "Arbitrum One",    "chainid": 42161,    "symbol": "ETH",    "explorer": "https://arbiscan.io",               "testnet": False},
-    {"name": "Polygon",         "chainid": 137,      "symbol": "POL",    "explorer": "https://polygonscan.com",           "testnet": False},
-    {"name": "Linea",           "chainid": 59144,    "symbol": "ETH",    "explorer": "https://lineascan.build",           "testnet": False},
-    {"name": "Blast",           "chainid": 81457,    "symbol": "ETH",    "explorer": "https://blastscan.io",              "testnet": False},
-    {"name": "Scroll",          "chainid": 534352,   "symbol": "ETH",    "explorer": "https://scrollscan.com",            "testnet": False},
-    {"name": "Mantle",          "chainid": 5000,     "symbol": "MNT",    "explorer": "https://mantlescan.xyz",            "testnet": False},
-    {"name": "Celo",            "chainid": 42220,    "symbol": "CELO",   "explorer": "https://celoscan.io",               "testnet": False},
-    {"name": "Gnosis",          "chainid": 100,      "symbol": "xDAI",   "explorer": "https://gnosisscan.io",             "testnet": False},
-    {"name": "Fraxtal",         "chainid": 252,      "symbol": "frxETH", "explorer": "https://fraxscan.com",              "testnet": False},
-    {"name": "Moonbeam",        "chainid": 1284,     "symbol": "GLMR",   "explorer": "https://moonbeam.moonscan.io",      "testnet": False},
-    {"name": "Moonriver",       "chainid": 1285,     "symbol": "MOVR",   "explorer": "https://moonriver.moonscan.io",     "testnet": False},
-    {"name": "opBNB",           "chainid": 204,      "symbol": "BNB",    "explorer": "https://opbnb.bscscan.com",         "testnet": False},
-    {"name": "Taiko",           "chainid": 167000,   "symbol": "ETH",    "explorer": "https://taikoscan.io",              "testnet": False},
-    {"name": "BitTorrent",      "chainid": 199,      "symbol": "BTT",    "explorer": "https://bttcscan.com",              "testnet": False},
-    {"name": "XDC",             "chainid": 50,       "symbol": "XDC",    "explorer": "https://xdcscan.io",                "testnet": False},
-    {"name": "ApeChain",        "chainid": 33139,    "symbol": "APE",    "explorer": "https://apescan.io",                "testnet": False},
-    {"name": "World",           "chainid": 480,      "symbol": "ETH",    "explorer": "https://worldscan.org",             "testnet": False},
-    {"name": "Sonic",           "chainid": 146,      "symbol": "S",      "explorer": "https://sonicscan.org",             "testnet": False},
-    {"name": "Unichain",        "chainid": 130,      "symbol": "ETH",    "explorer": "https://uniscan.xyz",               "testnet": False},
-    {"name": "Abstract",        "chainid": 2741,     "symbol": "ETH",    "explorer": "https://abscan.org",                "testnet": False},
-    {"name": "Berachain",       "chainid": 80094,    "symbol": "BERA",   "explorer": "https://berascan.com",              "testnet": False},
-    {"name": "Swellchain",      "chainid": 1923,     "symbol": "ETH",    "explorer": "https://swellscan.io",              "testnet": False},
-    {"name": "Monad",           "chainid": 143,      "symbol": "MON",    "explorer": "https://monadscan.com",             "testnet": False},
-    {"name": "HyperEVM",        "chainid": 999,      "symbol": "HYPE",   "explorer": "https://hyperscan.xyz",             "testnet": False},
-    {"name": "Katana",          "chainid": 747474,   "symbol": "ETH",    "explorer": "https://katanascan.xyz",            "testnet": False},
-    {"name": "Sei",             "chainid": 1329,     "symbol": "SEI",    "explorer": "https://seiscan.io",                "testnet": False},
-    {"name": "Memecore",        "chainid": 4352,     "symbol": "MEM",    "explorer": "https://memecorescan.io",           "testnet": False},
-    {"name": "Stable",          "chainid": 988,      "symbol": "STB",    "explorer": "https://stablescan.xyz",            "testnet": False},
-    {"name": "Plasma",          "chainid": 9745,     "symbol": "ETH",    "explorer": "https://plasmascan.io",             "testnet": False},
-    {"name": "MegaETH",         "chainid": 4326,     "symbol": "ETH",    "explorer": "https://megaethscan.io",            "testnet": False},
-    {"name": "zkSync Era",      "chainid": 324,      "symbol": "ETH",    "explorer": "https://explorer.zksync.io",        "testnet": False},
-    {"name": "Polygon zkEVM",   "chainid": 1101,     "symbol": "ETH",    "explorer": "https://zkevm.polygonscan.com",     "testnet": False},
-    {"name": "Fantom",          "chainid": 250,      "symbol": "FTM",    "explorer": "https://ftmscan.com",               "testnet": False},
-    {"name": "Cronos",          "chainid": 25,       "symbol": "CRO",    "explorer": "https://cronoscan.com",             "testnet": False},
-    # ── Testnets (all free tier) ──
-    {"name": "Sepolia",             "chainid": 11155111, "symbol": "ETH",  "explorer": "https://sepolia.etherscan.io",       "testnet": True},
-    {"name": "Hoodi",               "chainid": 560048,   "symbol": "ETH",  "explorer": "https://hoodi.etherscan.io",         "testnet": True},
-    {"name": "Arbitrum Sepolia",    "chainid": 421614,   "symbol": "ETH",  "explorer": "https://sepolia.arbiscan.io",        "testnet": True},
-    {"name": "Polygon Amoy",        "chainid": 80002,    "symbol": "POL",  "explorer": "https://amoy.polygonscan.com",       "testnet": True},
-    {"name": "Linea Sepolia",       "chainid": 59141,    "symbol": "ETH",  "explorer": "https://sepolia.lineascan.build",    "testnet": True},
-    {"name": "Blast Sepolia",       "chainid": 168587773,"symbol": "ETH",  "explorer": "https://sepolia.blastscan.io",       "testnet": True},
-    {"name": "Scroll Sepolia",      "chainid": 534351,   "symbol": "ETH",  "explorer": "https://sepolia.scrollscan.com",     "testnet": True},
-    {"name": "Mantle Sepolia",      "chainid": 5003,     "symbol": "MNT",  "explorer": "https://sepolia.mantlescan.xyz",     "testnet": True},
-    {"name": "Celo Sepolia",        "chainid": 11142220, "symbol": "CELO", "explorer": "https://sepolia.celoscan.io",        "testnet": True},
-    {"name": "Fraxtal Hoodi",       "chainid": 2523,     "symbol": "frxETH","explorer": "https://hoodi.fraxscan.com",        "testnet": True},
-    {"name": "Moonbase Alpha",      "chainid": 1287,     "symbol": "DEV",  "explorer": "https://moonbase.moonscan.io",       "testnet": True},
-    {"name": "opBNB Testnet",       "chainid": 5611,     "symbol": "tBNB", "explorer": "https://testnet.opbnb.bscscan.com",  "testnet": True},
-    {"name": "Taiko Hoodi",         "chainid": 167013,   "symbol": "ETH",  "explorer": "https://hoodi.taikoscan.io",         "testnet": True},
-    {"name": "BitTorrent Test",     "chainid": 1029,     "symbol": "BTT",  "explorer": "https://testnet.bttcscan.com",       "testnet": True},
-    {"name": "XDC Apothem",         "chainid": 51,       "symbol": "XDC",  "explorer": "https://apothem.xdcscan.io",         "testnet": True},
-    {"name": "ApeChain Curtis",     "chainid": 33111,    "symbol": "APE",  "explorer": "https://curtis.apescan.io",          "testnet": True},
-    {"name": "World Sepolia",       "chainid": 4801,     "symbol": "ETH",  "explorer": "https://sepolia.worldscan.org",      "testnet": True},
-    {"name": "Sonic Testnet",       "chainid": 14601,    "symbol": "S",    "explorer": "https://testnet.sonicscan.org",      "testnet": True},
-    {"name": "Unichain Sepolia",    "chainid": 1301,     "symbol": "ETH",  "explorer": "https://sepolia.uniscan.xyz",        "testnet": True},
-    {"name": "Abstract Sepolia",    "chainid": 11124,    "symbol": "ETH",  "explorer": "https://sepolia.abscan.org",         "testnet": True},
-    {"name": "Berachain Bepolia",   "chainid": 80069,    "symbol": "BERA", "explorer": "https://bepolia.berascan.com",       "testnet": True},
-    {"name": "Swellchain Test",     "chainid": 1924,     "symbol": "ETH",  "explorer": "https://testnet.swellscan.io",       "testnet": True},
-    {"name": "Monad Testnet",       "chainid": 10143,    "symbol": "MON",  "explorer": "https://testnet.monadscan.com",      "testnet": True},
-    {"name": "Katana Bokuto",       "chainid": 737373,   "symbol": "ETH",  "explorer": "https://bokuto.katanascan.xyz",      "testnet": True},
-    {"name": "Sei Testnet",         "chainid": 1328,     "symbol": "SEI",  "explorer": "https://testnet.seiscan.io",         "testnet": True},
-    {"name": "Memecore Test",       "chainid": 43521,    "symbol": "MEM",  "explorer": "https://testnet.memecorescan.io",    "testnet": True},
-    {"name": "Stable Testnet",      "chainid": 2201,     "symbol": "STB",  "explorer": "https://testnet.stablescan.xyz",     "testnet": True},
-    {"name": "Plasma Testnet",      "chainid": 9746,     "symbol": "ETH",  "explorer": "https://testnet.plasmascan.io",      "testnet": True},
-    {"name": "MegaETH Testnet",     "chainid": 6342,     "symbol": "ETH",  "explorer": "https://testnet.megaethscan.io",     "testnet": True},
+    {"name": "Ethereum",        "chainid": 1,         "symbol": "ETH",    "explorer": "https://etherscan.io",              "testnet": False},
+    {"name": "Arbitrum One",    "chainid": 42161,     "symbol": "ETH",    "explorer": "https://arbiscan.io",               "testnet": False},
+    {"name": "Polygon",         "chainid": 137,       "symbol": "POL",    "explorer": "https://polygonscan.com",           "testnet": False},
+    {"name": "Linea",           "chainid": 59144,     "symbol": "ETH",    "explorer": "https://lineascan.build",           "testnet": False},
+    {"name": "Blast",           "chainid": 81457,     "symbol": "ETH",    "explorer": "https://blastscan.io",              "testnet": False},
+    {"name": "Scroll",          "chainid": 534352,    "symbol": "ETH",    "explorer": "https://scrollscan.com",            "testnet": False},
+    {"name": "Mantle",          "chainid": 5000,      "symbol": "MNT",    "explorer": "https://mantlescan.xyz",            "testnet": False},
+    {"name": "Celo",            "chainid": 42220,     "symbol": "CELO",   "explorer": "https://celoscan.io",               "testnet": False},
+    {"name": "Gnosis",          "chainid": 100,       "symbol": "xDAI",   "explorer": "https://gnosisscan.io",             "testnet": False},
+    {"name": "Fraxtal",         "chainid": 252,       "symbol": "frxETH", "explorer": "https://fraxscan.com",              "testnet": False},
+    {"name": "Moonbeam",        "chainid": 1284,      "symbol": "GLMR",   "explorer": "https://moonbeam.moonscan.io",      "testnet": False},
+    {"name": "Moonriver",       "chainid": 1285,      "symbol": "MOVR",   "explorer": "https://moonriver.moonscan.io",     "testnet": False},
+    {"name": "opBNB",           "chainid": 204,       "symbol": "BNB",    "explorer": "https://opbnb.bscscan.com",         "testnet": False},
+    {"name": "Taiko",           "chainid": 167000,    "symbol": "ETH",    "explorer": "https://taikoscan.io",              "testnet": False},
+    {"name": "BitTorrent",      "chainid": 199,       "symbol": "BTT",    "explorer": "https://bttcscan.com",              "testnet": False},
+    {"name": "XDC",             "chainid": 50,        "symbol": "XDC",    "explorer": "https://xdcscan.io",                "testnet": False},
+    {"name": "ApeChain",        "chainid": 33139,     "symbol": "APE",    "explorer": "https://apescan.io",                "testnet": False},
+    {"name": "World",           "chainid": 480,       "symbol": "ETH",    "explorer": "https://worldscan.org",             "testnet": False},
+    {"name": "Sonic",           "chainid": 146,       "symbol": "S",      "explorer": "https://sonicscan.org",             "testnet": False},
+    {"name": "Unichain",        "chainid": 130,       "symbol": "ETH",    "explorer": "https://uniscan.xyz",               "testnet": False},
+    {"name": "Abstract",        "chainid": 2741,      "symbol": "ETH",    "explorer": "https://abscan.org",                "testnet": False},
+    {"name": "Berachain",       "chainid": 80094,     "symbol": "BERA",   "explorer": "https://berascan.com",              "testnet": False},
+    {"name": "Swellchain",      "chainid": 1923,      "symbol": "ETH",    "explorer": "https://swellscan.io",              "testnet": False},
+    {"name": "Monad",           "chainid": 143,       "symbol": "MON",    "explorer": "https://monadscan.com",             "testnet": False},
+    {"name": "HyperEVM",        "chainid": 999,       "symbol": "HYPE",   "explorer": "https://hyperscan.xyz",             "testnet": False},
+    {"name": "Katana",          "chainid": 747474,    "symbol": "ETH",    "explorer": "https://katanascan.xyz",            "testnet": False},
+    {"name": "Sei",             "chainid": 1329,      "symbol": "SEI",    "explorer": "https://seiscan.io",                "testnet": False},
+    {"name": "Memecore",        "chainid": 4352,      "symbol": "MEM",    "explorer": "https://memecorescan.io",           "testnet": False},
+    {"name": "Stable",          "chainid": 988,       "symbol": "STB",    "explorer": "https://stablescan.xyz",            "testnet": False},
+    {"name": "Plasma",          "chainid": 9745,      "symbol": "ETH",    "explorer": "https://plasmascan.io",             "testnet": False},
+    {"name": "MegaETH",         "chainid": 4326,      "symbol": "ETH",    "explorer": "https://megaethscan.io",            "testnet": False},
+    {"name": "zkSync Era",      "chainid": 324,       "symbol": "ETH",    "explorer": "https://explorer.zksync.io",        "testnet": False},
+    {"name": "Polygon zkEVM",   "chainid": 1101,      "symbol": "ETH",    "explorer": "https://zkevm.polygonscan.com",     "testnet": False},
+    {"name": "Fantom",          "chainid": 250,       "symbol": "FTM",    "explorer": "https://ftmscan.com",               "testnet": False},
+    {"name": "Cronos",          "chainid": 25,        "symbol": "CRO",    "explorer": "https://cronoscan.com",             "testnet": False},
+    # ── Testnets ──
+    {"name": "Sepolia",             "chainid": 11155111,  "symbol": "ETH",   "explorer": "https://sepolia.etherscan.io",       "testnet": True},
+    {"name": "Hoodi",               "chainid": 560048,    "symbol": "ETH",   "explorer": "https://hoodi.etherscan.io",         "testnet": True},
+    {"name": "Arbitrum Sepolia",    "chainid": 421614,    "symbol": "ETH",   "explorer": "https://sepolia.arbiscan.io",        "testnet": True},
+    {"name": "Polygon Amoy",        "chainid": 80002,     "symbol": "POL",   "explorer": "https://amoy.polygonscan.com",       "testnet": True},
+    {"name": "Linea Sepolia",       "chainid": 59141,     "symbol": "ETH",   "explorer": "https://sepolia.lineascan.build",    "testnet": True},
+    {"name": "Blast Sepolia",       "chainid": 168587773, "symbol": "ETH",   "explorer": "https://sepolia.blastscan.io",       "testnet": True},
+    {"name": "Scroll Sepolia",      "chainid": 534351,    "symbol": "ETH",   "explorer": "https://sepolia.scrollscan.com",     "testnet": True},
+    {"name": "Mantle Sepolia",      "chainid": 5003,      "symbol": "MNT",   "explorer": "https://sepolia.mantlescan.xyz",     "testnet": True},
+    {"name": "Celo Sepolia",        "chainid": 11142220,  "symbol": "CELO",  "explorer": "https://sepolia.celoscan.io",        "testnet": True},
+    {"name": "Fraxtal Hoodi",       "chainid": 2523,      "symbol": "frxETH","explorer": "https://hoodi.fraxscan.com",         "testnet": True},
+    {"name": "Moonbase Alpha",      "chainid": 1287,      "symbol": "DEV",   "explorer": "https://moonbase.moonscan.io",       "testnet": True},
+    {"name": "opBNB Testnet",       "chainid": 5611,      "symbol": "tBNB",  "explorer": "https://testnet.opbnb.bscscan.com",  "testnet": True},
+    {"name": "Taiko Hoodi",         "chainid": 167013,    "symbol": "ETH",   "explorer": "https://hoodi.taikoscan.io",         "testnet": True},
+    {"name": "BitTorrent Test",     "chainid": 1029,      "symbol": "BTT",   "explorer": "https://testnet.bttcscan.com",       "testnet": True},
+    {"name": "XDC Apothem",         "chainid": 51,        "symbol": "XDC",   "explorer": "https://apothem.xdcscan.io",         "testnet": True},
+    {"name": "ApeChain Curtis",     "chainid": 33111,     "symbol": "APE",   "explorer": "https://curtis.apescan.io",          "testnet": True},
+    {"name": "World Sepolia",       "chainid": 4801,      "symbol": "ETH",   "explorer": "https://sepolia.worldscan.org",      "testnet": True},
+    {"name": "Sonic Testnet",       "chainid": 14601,     "symbol": "S",     "explorer": "https://testnet.sonicscan.org",      "testnet": True},
+    {"name": "Unichain Sepolia",    "chainid": 1301,      "symbol": "ETH",   "explorer": "https://sepolia.uniscan.xyz",        "testnet": True},
+    {"name": "Abstract Sepolia",    "chainid": 11124,     "symbol": "ETH",   "explorer": "https://sepolia.abscan.org",         "testnet": True},
+    {"name": "Berachain Bepolia",   "chainid": 80069,     "symbol": "BERA",  "explorer": "https://bepolia.berascan.com",       "testnet": True},
+    {"name": "Swellchain Test",     "chainid": 1924,      "symbol": "ETH",   "explorer": "https://testnet.swellscan.io",       "testnet": True},
+    {"name": "Monad Testnet",       "chainid": 10143,     "symbol": "MON",   "explorer": "https://testnet.monadscan.com",      "testnet": True},
+    {"name": "Katana Bokuto",       "chainid": 737373,    "symbol": "ETH",   "explorer": "https://bokuto.katanascan.xyz",      "testnet": True},
+    {"name": "Sei Testnet",         "chainid": 1328,      "symbol": "SEI",   "explorer": "https://testnet.seiscan.io",         "testnet": True},
+    {"name": "Memecore Test",       "chainid": 43521,     "symbol": "MEM",   "explorer": "https://testnet.memecorescan.io",    "testnet": True},
+    {"name": "Stable Testnet",      "chainid": 2201,      "symbol": "STB",   "explorer": "https://testnet.stablescan.xyz",     "testnet": True},
+    {"name": "Plasma Testnet",      "chainid": 9746,      "symbol": "ETH",   "explorer": "https://testnet.plasmascan.io",      "testnet": True},
+    {"name": "MegaETH Testnet",     "chainid": 6342,      "symbol": "ETH",   "explorer": "https://testnet.megaethscan.io",     "testnet": True},
 ]
 
 ALL_CHAINS = DIRECT_CHAINS + V2_FREE_CHAINS
@@ -269,10 +268,13 @@ ALL_CHAINS = DIRECT_CHAINS + V2_FREE_CHAINS
 print(f"📡 {len(ALL_CHAINS)} chains | {len(KNOWN_TOKENS)} tokens", flush=True)
 
 
-# ── Rate limiter for Etherscan V2 (free tier: 5 calls/sec) ──
+# ══════════════════════════════════════════════════════════════
+# RATE LIMITER — Etherscan V2 free tier allows 5 calls/sec
+# ══════════════════════════════════════════════════════════════
 _v2_lock = threading.Lock()
 _v2_last_call = 0.0
-V2_MIN_INTERVAL = 0.22  # ~4.5 calls/sec to stay under 5/sec limit
+V2_MIN_INTERVAL = 0.22  # ~4.5 calls/sec to stay safely under limit
+
 
 def _rate_limited_get(url, timeout=10):
     """HTTP GET with rate limiting for Etherscan V2 calls."""
@@ -289,16 +291,21 @@ def _rate_limited_get(url, timeout=10):
 
 
 def _http_get(url, timeout=10):
-    """Simple HTTP GET (no rate limiting — for direct API calls)."""
+    """Simple HTTP GET without rate limiting — for direct API calls."""
     req = urllib.request.Request(url, headers={"User-Agent": "WalletExplainer/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
 
 
-# ── Fetch helpers ────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# TRANSACTION FETCHING — the ONLY code path for getting tx data
+# ══════════════════════════════════════════════════════════════
 
 def _parse_tx(result, receipt, chain):
-    """Parse raw JSON-RPC tx + receipt into our standard format."""
+    """
+    Parse raw JSON-RPC transaction + receipt into our standard format.
+    THIS is where resolve_token is called for every ERC-20 transfer log.
+    """
     value_wei = int(result.get("value", "0x0"), 16)
     value_native = value_wei / 1e18
     gas_price_wei = int(result.get("gasPrice", "0x0"), 16)
@@ -309,20 +316,22 @@ def _parse_tx(result, receipt, chain):
     gas_fee = (gas_used * gas_price_wei) / 1e18
     symbol = chain["symbol"]
 
-    # Parse ERC-20 token transfers from logs
+    # ── Parse ERC-20 token transfers from receipt logs ──
     token_transfers = []
     transfer_topic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-    for log in (receipt.get("logs", []) if receipt else []):
-        topics = log.get("topics", [])
-        if topics and topics[0] == transfer_topic and len(topics) >= 3:
-            raw_amount = int(log.get("data", "0x0"), 16)
-            token_name, formatted_amt = resolve_token(log.get("address", ""), raw_amount)
-            token_transfers.append({
-                "token": token_name,
-                "amount": formatted_amt,
-                "from": "0x" + topics[1][-40:],
-                "to": "0x" + topics[2][-40:],
-            })
+    if receipt and receipt.get("logs"):
+        for log in receipt["logs"]:
+            topics = log.get("topics", [])
+            if topics and topics[0] == transfer_topic and len(topics) >= 3:
+                raw_amount = int(log.get("data", "0x0"), 16)
+                # *** THIS IS THE KEY LINE — resolve_token maps address → name ***
+                token_name, formatted_amt = resolve_token(log.get("address", ""), raw_amount)
+                token_transfers.append({
+                    "token": token_name,
+                    "amount": formatted_amt,
+                    "from": "0x" + topics[1][-40:],
+                    "to": "0x" + topics[2][-40:],
+                })
 
     is_contract_call = result.get("input", "0x") != "0x"
     tx_hash = result.get("hash", "")
@@ -349,68 +358,74 @@ def _parse_tx(result, receipt, chain):
 
 
 def _fetch_direct(tx_hash, chain):
-    """Fetch from a chain's own explorer API (e.g. basescan.org/api)."""
+    """Fetch from a chain's own explorer API (Base, OP, BNB, AVAX)."""
     api_key = os.environ.get("BASESCAN_API_KEY", "") or ETHERSCAN_KEY or "YourApiKeyToken"
     try:
-        data = _http_get(f"{chain['api']}?module=proxy&action=eth_getTransactionByHash&txhash={tx_hash}&apikey={api_key}")
+        data = _http_get(
+            f"{chain['api']}?module=proxy&action=eth_getTransactionByHash"
+            f"&txhash={tx_hash}&apikey={api_key}"
+        )
         result = data.get("result")
         if not result or isinstance(result, str):
             return None
-        data2 = _http_get(f"{chain['api']}?module=proxy&action=eth_getTransactionReceipt&txhash={tx_hash}&apikey={api_key}")
+        data2 = _http_get(
+            f"{chain['api']}?module=proxy&action=eth_getTransactionReceipt"
+            f"&txhash={tx_hash}&apikey={api_key}"
+        )
         return _parse_tx(result, data2.get("result") or {}, chain)
-    except Exception as e:
+    except Exception:
         return None
 
 
 def _fetch_v2(tx_hash, chain):
-    """Fetch via Etherscan V2 unified API with rate limiting."""
+    """Fetch via Etherscan V2 unified API with rate limiting + retry."""
     api_key = ETHERSCAN_KEY or "YourApiKeyToken"
     chainid = chain["chainid"]
     try:
-        data = _rate_limited_get(
+        url_tx = (
             f"https://api.etherscan.io/v2/api?chainid={chainid}"
             f"&module=proxy&action=eth_getTransactionByHash"
             f"&txhash={tx_hash}&apikey={api_key}"
         )
+        data = _rate_limited_get(url_tx)
 
-        # Check for rate limit or error messages
+        # Retry once on rate limit
         msg = data.get("message", "")
         if "rate limit" in msg.lower():
             print(f"⏳ Rate limited on {chain['name']}, retrying...", flush=True)
             time.sleep(1)
-            data = _rate_limited_get(
-                f"https://api.etherscan.io/v2/api?chainid={chainid}"
-                f"&module=proxy&action=eth_getTransactionByHash"
-                f"&txhash={tx_hash}&apikey={api_key}"
-            )
+            data = _rate_limited_get(url_tx)
 
         result = data.get("result")
-
-        # "result" can be: None, "null" string, error string, or a dict (success)
         if not result or not isinstance(result, dict):
             return None
 
-        # Got tx — now get receipt (also rate limited)
-        data2 = _rate_limited_get(
+        # Got the tx — now get the receipt
+        url_receipt = (
             f"https://api.etherscan.io/v2/api?chainid={chainid}"
             f"&module=proxy&action=eth_getTransactionReceipt"
             f"&txhash={tx_hash}&apikey={api_key}"
         )
+        data2 = _rate_limited_get(url_receipt)
         receipt = data2.get("result")
         if not isinstance(receipt, dict):
             receipt = {}
 
         return _parse_tx(result, receipt, chain)
-    except Exception as e:
+    except Exception:
         return None
 
 
 def fetch_real_transaction(tx_hash):
-    """Search chains to find the transaction. Direct chains in parallel, V2 sequentially by batch."""
+    """
+    Search all chains to find the transaction.
+    Step 1: Direct API chains in parallel (separate rate limits).
+    Step 2: V2 free-tier chains with shared rate limiter.
+    """
     print(f"📡 Searching across {len(ALL_CHAINS)} EVM chains...", flush=True)
     start = time.time()
 
-    # ── Step 1: Check DIRECT_CHAINS in parallel (separate APIs, no shared rate limit)
+    # ── Step 1: DIRECT_CHAINS in parallel (each has its own API, no shared limit)
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_fetch_direct, tx_hash, c): c for c in DIRECT_CHAINS}
         for f in as_completed(futures):
@@ -420,13 +435,11 @@ def fetch_real_transaction(tx_hash):
                 print(f"✅ Found on {chain['name']} (direct) in {time.time()-start:.1f}s", flush=True)
                 return result
 
-    # ── Step 2: Check V2 free-tier chains
-    # Priority mainnets first (most likely), then the rest
-    # V2 calls are rate-limited via _rate_limited_get, so we use limited parallelism
+    # ── Step 2: V2 free-tier — priority mainnets first, then rest
     priority_v2 = [c for c in V2_FREE_CHAINS if not c.get("testnet", False)][:15]
     remaining_v2 = [c for c in V2_FREE_CHAINS if c not in priority_v2]
 
-    # Batch 2a: Priority V2 mainnets — 3 workers (each rate-limited)
+    # Batch 2a: Top 15 mainnets
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {pool.submit(_fetch_v2, tx_hash, c): c for c in priority_v2}
         for f in as_completed(futures):
@@ -436,7 +449,7 @@ def fetch_real_transaction(tx_hash):
                 print(f"✅ Found on {chain['name']} (v2) in {time.time()-start:.1f}s", flush=True)
                 return result
 
-    # Batch 2b: Remaining V2 chains (smaller mainnets + testnets)
+    # Batch 2b: Smaller mainnets + all testnets
     if remaining_v2:
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {pool.submit(_fetch_v2, tx_hash, c): c for c in remaining_v2}
@@ -452,6 +465,7 @@ def fetch_real_transaction(tx_hash):
 
 
 def get_fallback_transaction(tx_hash):
+    """Return a placeholder when no chain has this transaction."""
     return {
         "hash": tx_hash,
         "from": "unknown",
@@ -473,7 +487,9 @@ def get_fallback_transaction(tx_hash):
     }
 
 
-# ── OpenGradient AI Analysis ────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# OPENGRADIENT AI ANALYSIS
+# ══════════════════════════════════════════════════════════════
 
 def call_opengradient(prompt, max_retries=2):
     client = get_og_client()
@@ -495,7 +511,7 @@ def call_opengradient(prompt, max_retries=2):
             elapsed = time.time() - start
             print(f"✅ LLM responded in {elapsed:.1f}s", flush=True)
             explanation = None
-            if hasattr(result, 'chat_output'):
+            if hasattr(result, "chat_output"):
                 co = result.chat_output
                 explanation = co.get("content", str(co)) if isinstance(co, dict) else str(co)
             payment_hash = getattr(result, "payment_hash", None)
@@ -550,7 +566,7 @@ Use ## headers, **bold**.
             },
         }
 
-    # Fallback — no AI
+    # Fallback — no AI available
     return {
         "explanation": f"""## Transaction on {chain_name}
 **Hash:** {tx_data['hash'][:16]}...
@@ -576,15 +592,19 @@ Use ## headers, **bold**.
     }
 
 
-# ── Routes ───────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# ROUTES
+# ══════════════════════════════════════════════════════════════
 
 @app.route("/")
 def index():
     return send_from_directory("public", "index.html")
 
+
 @app.route("/<path:path>")
 def static_files(path):
     return send_from_directory("public", path)
+
 
 @app.route("/analyze-transaction", methods=["POST", "OPTIONS"])
 def analyze_transaction():
@@ -601,13 +621,11 @@ def analyze_transaction():
         print(f"\n{'='*50}", flush=True)
         print(f"🔍 Analyzing: {tx_hash}", flush=True)
 
-        # Fetch real transaction from any EVM chain
         tx_data = fetch_real_transaction(tx_hash)
         if tx_data is None:
             print("⚠️  Not found — using fallback", flush=True)
             tx_data = get_fallback_transaction(tx_hash)
 
-        # Analyze with OpenGradient AI
         analysis = analyze_transaction_data(tx_data)
 
         mode = analysis["proof"]["mode"]
