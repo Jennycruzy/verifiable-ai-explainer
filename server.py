@@ -164,7 +164,6 @@ def resolve_token(address, raw_amount):
         elif amt > 0:
             return name, f"{amt:.6f}"
         return name, "0"
-    # Unknown token — guess decimals
     amt_6 = raw_amount / 1e6
     amt_18 = raw_amount / 1e18
     short = addr[:10] + "..."
@@ -181,9 +180,6 @@ def resolve_token(address, raw_amount):
 
 ETHERSCAN_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
 
-# Chains with their own direct explorer APIs.
-# These are paid-tier on V2, so we try their own API first.
-# Each also has a V2 entry below as backup (works if user has paid key).
 DIRECT_API_ENDPOINTS = {
     8453:     {"api": "https://api.basescan.org/api",                    "name": "Base"},
     10:       {"api": "https://api-optimistic.etherscan.io/api",         "name": "OP Mainnet"},
@@ -195,8 +191,18 @@ DIRECT_API_ENDPOINTS = {
     43113:    {"api": "https://api-testnet.snowscan.xyz/api",            "name": "Avalanche Fuji"},
 }
 
-# ALL chains — every chain uses V2. Chains in DIRECT_API_ENDPOINTS also get
-# a direct API attempt first for redundancy.
+# ── Public RPC endpoints — FREE, no API key, for paid-only V2 chains ──
+PUBLIC_RPC = {
+    8453:     "https://mainnet.base.org",
+    84532:    "https://sepolia.base.org",
+    10:       "https://mainnet.optimism.io",
+    11155420: "https://sepolia.optimism.io",
+    56:       "https://bsc-dataseed.binance.org",
+    97:       "https://data-seed-prebsc-1-s1.binance.org:8545",
+    43114:    "https://api.avax.network/ext/bc/C/rpc",
+    43113:    "https://api.avax-test.network/ext/bc/C/rpc",
+}
+
 ALL_CHAINS = [
     # ── Priority mainnets (tried first) ──
     {"name": "Ethereum",        "chainid": 1,         "symbol": "ETH",    "explorer": "https://etherscan.io",              "testnet": False},
@@ -287,7 +293,6 @@ V2_MIN_INTERVAL = 0.22
 
 
 def _rate_limited_get(url, timeout=10):
-    """HTTP GET with rate limiting for Etherscan V2."""
     global _v2_last_call
     with _v2_lock:
         now = time.time()
@@ -301,7 +306,6 @@ def _rate_limited_get(url, timeout=10):
 
 
 def _http_get(url, timeout=10):
-    """Simple HTTP GET without rate limiting."""
     req = urllib.request.Request(url, headers={"User-Agent": "WalletExplainer/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
@@ -361,7 +365,6 @@ def _parse_tx(result, receipt, chain):
 
 
 def _try_direct_api(tx_hash, chain):
-    """Try chain's own explorer API (for Base, OP, BNB, AVAX)."""
     endpoint_info = DIRECT_API_ENDPOINTS.get(chain["chainid"])
     if not endpoint_info:
         return None
@@ -379,53 +382,78 @@ def _try_direct_api(tx_hash, chain):
 
 
 def _try_v2_api(tx_hash, chain):
-    """Try Etherscan V2 unified API with rate limiting."""
     api_key = ETHERSCAN_KEY or "YourApiKeyToken"
     chainid = chain["chainid"]
     try:
         url_base = f"https://api.etherscan.io/v2/api?chainid={chainid}&apikey={api_key}"
         data = _rate_limited_get(f"{url_base}&module=proxy&action=eth_getTransactionByHash&txhash={tx_hash}")
-
-        # Retry once on rate limit
         if "rate limit" in data.get("message", "").lower():
             time.sleep(1)
             data = _rate_limited_get(f"{url_base}&module=proxy&action=eth_getTransactionByHash&txhash={tx_hash}")
-
         result = data.get("result")
         if not result or not isinstance(result, dict):
             return None
-
         data2 = _rate_limited_get(f"{url_base}&module=proxy&action=eth_getTransactionReceipt&txhash={tx_hash}")
         receipt = data2.get("result")
         if not isinstance(receipt, dict):
             receipt = {}
+        return _parse_tx(result, receipt, chain)
+    except Exception:
+        return None
 
+
+def _try_rpc(tx_hash, chain):
+    """Fetch via public RPC — FREE, no API key. Works for Base, OP, BNB, AVAX."""
+    rpc_url = PUBLIC_RPC.get(chain["chainid"])
+    if not rpc_url:
+        return None
+    try:
+        def rpc_call(method, params):
+            payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+            req = urllib.request.Request(rpc_url, data=payload, headers={
+                "Content-Type": "application/json",
+                "User-Agent": "WalletExplainer/1.0",
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read().decode()).get("result")
+
+        result = rpc_call("eth_getTransactionByHash", [tx_hash])
+        if not result or not isinstance(result, dict):
+            return None
+        receipt = rpc_call("eth_getTransactionReceipt", [tx_hash])
+        if not receipt or not isinstance(receipt, dict):
+            receipt = {}
         return _parse_tx(result, receipt, chain)
     except Exception:
         return None
 
 
 def _check_chain(tx_hash, chain):
-    """Try direct API first (if available), then V2."""
-    # Try direct API (Base, OP, BNB, AVAX, and their testnets)
+    """Try direct API → V2 → public RPC (3 chances to find it)."""
+    # 1. Direct explorer API (Base, OP, BNB, AVAX)
     if chain["chainid"] in DIRECT_API_ENDPOINTS:
         result = _try_direct_api(tx_hash, chain)
         if result:
             return result
-    # Try V2
-    return _try_v2_api(tx_hash, chain)
+    # 2. Etherscan V2
+    result = _try_v2_api(tx_hash, chain)
+    if result:
+        return result
+    # 3. Public RPC fallback (no API key needed)
+    if chain["chainid"] in PUBLIC_RPC:
+        result = _try_rpc(tx_hash, chain)
+        if result:
+            return result
+    return None
 
 
 def fetch_real_transaction(tx_hash):
-    """Search all chains. Priority mainnets first, then remaining."""
     print(f"📡 Searching across {len(ALL_CHAINS)} EVM chains...", flush=True)
     start = time.time()
 
-    # Split into priority mainnets (first 15) and the rest
     priority = ALL_CHAINS[:15]
     remaining = ALL_CHAINS[15:]
 
-    # Batch 1: Priority mainnets — 3 workers (rate limiter prevents overload)
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {pool.submit(_check_chain, tx_hash, c): c for c in priority}
         for f in as_completed(futures):
@@ -435,7 +463,6 @@ def fetch_real_transaction(tx_hash):
                 print(f"✅ Found on {chain['name']} in {time.time()-start:.1f}s", flush=True)
                 return result
 
-    # Batch 2: Remaining chains
     if remaining:
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {pool.submit(_check_chain, tx_hash, c): c for c in remaining}
@@ -611,9 +638,9 @@ def debug():
         "sdk": OG_AVAILABLE,
         "key": f"{pk[:8]}..." if pk and "YOUR" not in pk else "NOT SET",
         "etherscan_key": "SET" if ETHERSCAN_KEY else "FREE TIER",
-        "basescan_key": "SET" if os.environ.get("BASESCAN_API_KEY", "") else "NOT SET",
         "chains": len(ALL_CHAINS),
         "tokens": len(KNOWN_TOKENS),
+        "rpc_fallback": list(PUBLIC_RPC.keys()),
     })
 
 if __name__ == "__main__":
