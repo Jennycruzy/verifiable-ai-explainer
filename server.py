@@ -60,8 +60,7 @@ def get_og_client():
 
 
 # ══════════════════════════════════════════════════════════════
-# KNOWN TOKENS — Official contract addresses
-# All lowercase for matching. Returns (name, decimals)
+# KNOWN TOKENS — Official contract addresses (lowercase)
 # ══════════════════════════════════════════════════════════════
 KNOWN_TOKENS = {
     # ── Ethereum (1) ──
@@ -152,7 +151,7 @@ KNOWN_TOKENS = {
 
 
 def resolve_token(address, raw_amount):
-    """Resolve token name and format amount using KNOWN_TOKENS, with decimal guessing fallback."""
+    """Resolve token name and format amount using KNOWN_TOKENS."""
     addr = address.lower()
     info = KNOWN_TOKENS.get(addr)
     if info:
@@ -165,7 +164,7 @@ def resolve_token(address, raw_amount):
         elif amt > 0:
             return name, f"{amt:.6f}"
         return name, "0"
-    # Unknown token — try common decimals
+    # Unknown token — guess decimals
     amt_6 = raw_amount / 1e6
     amt_18 = raw_amount / 1e18
     short = addr[:10] + "..."
@@ -182,29 +181,40 @@ def resolve_token(address, raw_amount):
 
 ETHERSCAN_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
 
-# Direct API chains — paid-tier on V2, so we use their own explorer APIs
-DIRECT_CHAINS = [
-    {"name": "Base",            "chainid": 8453,     "symbol": "ETH",  "explorer": "https://basescan.org",                    "api": "https://api.basescan.org/api",                          "testnet": False},
-    {"name": "OP Mainnet",      "chainid": 10,       "symbol": "ETH",  "explorer": "https://optimistic.etherscan.io",         "api": "https://api-optimistic.etherscan.io/api",               "testnet": False},
-    {"name": "BNB Smart Chain", "chainid": 56,       "symbol": "BNB",  "explorer": "https://bscscan.com",                     "api": "https://api.bscscan.com/api",                           "testnet": False},
-    {"name": "Avalanche C",     "chainid": 43114,    "symbol": "AVAX", "explorer": "https://snowscan.xyz",                    "api": "https://api.snowscan.xyz/api",                          "testnet": False},
-    {"name": "Base Sepolia",    "chainid": 84532,    "symbol": "ETH",  "explorer": "https://sepolia.basescan.org",            "api": "https://api-sepolia.basescan.org/api",                  "testnet": True},
-    {"name": "OP Sepolia",      "chainid": 11155420, "symbol": "ETH",  "explorer": "https://sepolia-optimistic.etherscan.io", "api": "https://api-sepolia-optimistic.etherscan.io/api",       "testnet": True},
-    {"name": "BNB Testnet",     "chainid": 97,       "symbol": "tBNB", "explorer": "https://testnet.bscscan.com",             "api": "https://api-testnet.bscscan.com/api",                   "testnet": True},
-    {"name": "Avalanche Fuji",  "chainid": 43113,    "symbol": "AVAX", "explorer": "https://testnet.snowscan.xyz",            "api": "https://api-testnet.snowscan.xyz/api",                  "testnet": True},
-]
+# Chains with their own direct explorer APIs.
+# These are paid-tier on V2, so we try their own API first.
+# Each also has a V2 entry below as backup (works if user has paid key).
+DIRECT_API_ENDPOINTS = {
+    8453:     {"api": "https://api.basescan.org/api",                    "name": "Base"},
+    10:       {"api": "https://api-optimistic.etherscan.io/api",         "name": "OP Mainnet"},
+    56:       {"api": "https://api.bscscan.com/api",                     "name": "BNB Smart Chain"},
+    43114:    {"api": "https://api.snowscan.xyz/api",                    "name": "Avalanche C"},
+    84532:    {"api": "https://api-sepolia.basescan.org/api",            "name": "Base Sepolia"},
+    11155420: {"api": "https://api-sepolia-optimistic.etherscan.io/api", "name": "OP Sepolia"},
+    97:       {"api": "https://api-testnet.bscscan.com/api",            "name": "BNB Testnet"},
+    43113:    {"api": "https://api-testnet.snowscan.xyz/api",            "name": "Avalanche Fuji"},
+}
 
-# V2 API chains — free tier on Etherscan V2 (confirmed at docs.etherscan.io/supported-chains)
-V2_FREE_CHAINS = [
+# ALL chains — every chain uses V2. Chains in DIRECT_API_ENDPOINTS also get
+# a direct API attempt first for redundancy.
+ALL_CHAINS = [
+    # ── Priority mainnets (tried first) ──
     {"name": "Ethereum",        "chainid": 1,         "symbol": "ETH",    "explorer": "https://etherscan.io",              "testnet": False},
+    {"name": "Base",            "chainid": 8453,      "symbol": "ETH",    "explorer": "https://basescan.org",              "testnet": False},
     {"name": "Arbitrum One",    "chainid": 42161,     "symbol": "ETH",    "explorer": "https://arbiscan.io",               "testnet": False},
+    {"name": "OP Mainnet",      "chainid": 10,        "symbol": "ETH",    "explorer": "https://optimistic.etherscan.io",   "testnet": False},
     {"name": "Polygon",         "chainid": 137,       "symbol": "POL",    "explorer": "https://polygonscan.com",           "testnet": False},
+    {"name": "BNB Smart Chain", "chainid": 56,        "symbol": "BNB",    "explorer": "https://bscscan.com",               "testnet": False},
+    {"name": "Avalanche C",     "chainid": 43114,     "symbol": "AVAX",   "explorer": "https://snowscan.xyz",              "testnet": False},
     {"name": "Linea",           "chainid": 59144,     "symbol": "ETH",    "explorer": "https://lineascan.build",           "testnet": False},
     {"name": "Blast",           "chainid": 81457,     "symbol": "ETH",    "explorer": "https://blastscan.io",              "testnet": False},
     {"name": "Scroll",          "chainid": 534352,    "symbol": "ETH",    "explorer": "https://scrollscan.com",            "testnet": False},
     {"name": "Mantle",          "chainid": 5000,      "symbol": "MNT",    "explorer": "https://mantlescan.xyz",            "testnet": False},
     {"name": "Celo",            "chainid": 42220,     "symbol": "CELO",   "explorer": "https://celoscan.io",               "testnet": False},
     {"name": "Gnosis",          "chainid": 100,       "symbol": "xDAI",   "explorer": "https://gnosisscan.io",             "testnet": False},
+    {"name": "Monad",           "chainid": 143,       "symbol": "MON",    "explorer": "https://monadscan.com",             "testnet": False},
+    {"name": "Sonic",           "chainid": 146,       "symbol": "S",      "explorer": "https://sonicscan.org",             "testnet": False},
+    # ── More mainnets ──
     {"name": "Fraxtal",         "chainid": 252,       "symbol": "frxETH", "explorer": "https://fraxscan.com",              "testnet": False},
     {"name": "Moonbeam",        "chainid": 1284,      "symbol": "GLMR",   "explorer": "https://moonbeam.moonscan.io",      "testnet": False},
     {"name": "Moonriver",       "chainid": 1285,      "symbol": "MOVR",   "explorer": "https://moonriver.moonscan.io",     "testnet": False},
@@ -214,12 +224,10 @@ V2_FREE_CHAINS = [
     {"name": "XDC",             "chainid": 50,        "symbol": "XDC",    "explorer": "https://xdcscan.io",                "testnet": False},
     {"name": "ApeChain",        "chainid": 33139,     "symbol": "APE",    "explorer": "https://apescan.io",                "testnet": False},
     {"name": "World",           "chainid": 480,       "symbol": "ETH",    "explorer": "https://worldscan.org",             "testnet": False},
-    {"name": "Sonic",           "chainid": 146,       "symbol": "S",      "explorer": "https://sonicscan.org",             "testnet": False},
     {"name": "Unichain",        "chainid": 130,       "symbol": "ETH",    "explorer": "https://uniscan.xyz",               "testnet": False},
     {"name": "Abstract",        "chainid": 2741,      "symbol": "ETH",    "explorer": "https://abscan.org",                "testnet": False},
     {"name": "Berachain",       "chainid": 80094,     "symbol": "BERA",   "explorer": "https://berascan.com",              "testnet": False},
     {"name": "Swellchain",      "chainid": 1923,      "symbol": "ETH",    "explorer": "https://swellscan.io",              "testnet": False},
-    {"name": "Monad",           "chainid": 143,       "symbol": "MON",    "explorer": "https://monadscan.com",             "testnet": False},
     {"name": "HyperEVM",        "chainid": 999,       "symbol": "HYPE",   "explorer": "https://hyperscan.xyz",             "testnet": False},
     {"name": "Katana",          "chainid": 747474,    "symbol": "ETH",    "explorer": "https://katanascan.xyz",            "testnet": False},
     {"name": "Sei",             "chainid": 1329,      "symbol": "SEI",    "explorer": "https://seiscan.io",                "testnet": False},
@@ -234,6 +242,10 @@ V2_FREE_CHAINS = [
     # ── Testnets ──
     {"name": "Sepolia",             "chainid": 11155111,  "symbol": "ETH",   "explorer": "https://sepolia.etherscan.io",       "testnet": True},
     {"name": "Hoodi",               "chainid": 560048,    "symbol": "ETH",   "explorer": "https://hoodi.etherscan.io",         "testnet": True},
+    {"name": "Base Sepolia",        "chainid": 84532,     "symbol": "ETH",   "explorer": "https://sepolia.basescan.org",       "testnet": True},
+    {"name": "OP Sepolia",          "chainid": 11155420,  "symbol": "ETH",   "explorer": "https://sepolia-optimistic.etherscan.io", "testnet": True},
+    {"name": "BNB Testnet",         "chainid": 97,        "symbol": "tBNB",  "explorer": "https://testnet.bscscan.com",        "testnet": True},
+    {"name": "Avalanche Fuji",      "chainid": 43113,     "symbol": "AVAX",  "explorer": "https://testnet.snowscan.xyz",       "testnet": True},
     {"name": "Arbitrum Sepolia",    "chainid": 421614,    "symbol": "ETH",   "explorer": "https://sepolia.arbiscan.io",        "testnet": True},
     {"name": "Polygon Amoy",        "chainid": 80002,     "symbol": "POL",   "explorer": "https://amoy.polygonscan.com",       "testnet": True},
     {"name": "Linea Sepolia",       "chainid": 59141,     "symbol": "ETH",   "explorer": "https://sepolia.lineascan.build",    "testnet": True},
@@ -263,21 +275,19 @@ V2_FREE_CHAINS = [
     {"name": "MegaETH Testnet",     "chainid": 6342,      "symbol": "ETH",   "explorer": "https://testnet.megaethscan.io",     "testnet": True},
 ]
 
-ALL_CHAINS = DIRECT_CHAINS + V2_FREE_CHAINS
-
 print(f"📡 {len(ALL_CHAINS)} chains | {len(KNOWN_TOKENS)} tokens", flush=True)
 
 
 # ══════════════════════════════════════════════════════════════
-# RATE LIMITER — Etherscan V2 free tier allows 5 calls/sec
+# RATE LIMITER — Etherscan V2 free tier: 5 calls/sec
 # ══════════════════════════════════════════════════════════════
 _v2_lock = threading.Lock()
 _v2_last_call = 0.0
-V2_MIN_INTERVAL = 0.22  # ~4.5 calls/sec to stay safely under limit
+V2_MIN_INTERVAL = 0.22
 
 
 def _rate_limited_get(url, timeout=10):
-    """HTTP GET with rate limiting for Etherscan V2 calls."""
+    """HTTP GET with rate limiting for Etherscan V2."""
     global _v2_last_call
     with _v2_lock:
         now = time.time()
@@ -291,21 +301,18 @@ def _rate_limited_get(url, timeout=10):
 
 
 def _http_get(url, timeout=10):
-    """Simple HTTP GET without rate limiting — for direct API calls."""
+    """Simple HTTP GET without rate limiting."""
     req = urllib.request.Request(url, headers={"User-Agent": "WalletExplainer/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
 
 
 # ══════════════════════════════════════════════════════════════
-# TRANSACTION FETCHING — the ONLY code path for getting tx data
+# TRANSACTION FETCHING
 # ══════════════════════════════════════════════════════════════
 
 def _parse_tx(result, receipt, chain):
-    """
-    Parse raw JSON-RPC transaction + receipt into our standard format.
-    THIS is where resolve_token is called for every ERC-20 transfer log.
-    """
+    """Parse JSON-RPC tx + receipt. Calls resolve_token for every ERC-20 log."""
     value_wei = int(result.get("value", "0x0"), 16)
     value_native = value_wei / 1e18
     gas_price_wei = int(result.get("gasPrice", "0x0"), 16)
@@ -316,7 +323,6 @@ def _parse_tx(result, receipt, chain):
     gas_fee = (gas_used * gas_price_wei) / 1e18
     symbol = chain["symbol"]
 
-    # ── Parse ERC-20 token transfers from receipt logs ──
     token_transfers = []
     transfer_topic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
     if receipt and receipt.get("logs"):
@@ -324,7 +330,6 @@ def _parse_tx(result, receipt, chain):
             topics = log.get("topics", [])
             if topics and topics[0] == transfer_topic and len(topics) >= 3:
                 raw_amount = int(log.get("data", "0x0"), 16)
-                # *** THIS IS THE KEY LINE — resolve_token maps address → name ***
                 token_name, formatted_amt = resolve_token(log.get("address", ""), raw_amount)
                 token_transfers.append({
                     "token": token_name,
@@ -333,9 +338,7 @@ def _parse_tx(result, receipt, chain):
                     "to": "0x" + topics[2][-40:],
                 })
 
-    is_contract_call = result.get("input", "0x") != "0x"
     tx_hash = result.get("hash", "")
-
     return {
         "hash": tx_hash,
         "from": result.get("from", "unknown"),
@@ -351,62 +354,48 @@ def _parse_tx(result, receipt, chain):
         "symbol": symbol,
         "isTestnet": chain.get("testnet", False),
         "tokenTransfers": token_transfers[:10],
-        "isContractCall": is_contract_call,
+        "isContractCall": result.get("input", "0x") != "0x",
         "inputData": result.get("input", "0x")[:100],
         "nonce": int(result.get("nonce", "0x0"), 16),
     }
 
 
-def _fetch_direct(tx_hash, chain):
-    """Fetch from a chain's own explorer API (Base, OP, BNB, AVAX)."""
+def _try_direct_api(tx_hash, chain):
+    """Try chain's own explorer API (for Base, OP, BNB, AVAX)."""
+    endpoint_info = DIRECT_API_ENDPOINTS.get(chain["chainid"])
+    if not endpoint_info:
+        return None
+    api_url = endpoint_info["api"]
     api_key = os.environ.get("BASESCAN_API_KEY", "") or ETHERSCAN_KEY or "YourApiKeyToken"
     try:
-        data = _http_get(
-            f"{chain['api']}?module=proxy&action=eth_getTransactionByHash"
-            f"&txhash={tx_hash}&apikey={api_key}"
-        )
+        data = _http_get(f"{api_url}?module=proxy&action=eth_getTransactionByHash&txhash={tx_hash}&apikey={api_key}")
         result = data.get("result")
         if not result or isinstance(result, str):
             return None
-        data2 = _http_get(
-            f"{chain['api']}?module=proxy&action=eth_getTransactionReceipt"
-            f"&txhash={tx_hash}&apikey={api_key}"
-        )
+        data2 = _http_get(f"{api_url}?module=proxy&action=eth_getTransactionReceipt&txhash={tx_hash}&apikey={api_key}")
         return _parse_tx(result, data2.get("result") or {}, chain)
     except Exception:
         return None
 
 
-def _fetch_v2(tx_hash, chain):
-    """Fetch via Etherscan V2 unified API with rate limiting + retry."""
+def _try_v2_api(tx_hash, chain):
+    """Try Etherscan V2 unified API with rate limiting."""
     api_key = ETHERSCAN_KEY or "YourApiKeyToken"
     chainid = chain["chainid"]
     try:
-        url_tx = (
-            f"https://api.etherscan.io/v2/api?chainid={chainid}"
-            f"&module=proxy&action=eth_getTransactionByHash"
-            f"&txhash={tx_hash}&apikey={api_key}"
-        )
-        data = _rate_limited_get(url_tx)
+        url_base = f"https://api.etherscan.io/v2/api?chainid={chainid}&apikey={api_key}"
+        data = _rate_limited_get(f"{url_base}&module=proxy&action=eth_getTransactionByHash&txhash={tx_hash}")
 
         # Retry once on rate limit
-        msg = data.get("message", "")
-        if "rate limit" in msg.lower():
-            print(f"⏳ Rate limited on {chain['name']}, retrying...", flush=True)
+        if "rate limit" in data.get("message", "").lower():
             time.sleep(1)
-            data = _rate_limited_get(url_tx)
+            data = _rate_limited_get(f"{url_base}&module=proxy&action=eth_getTransactionByHash&txhash={tx_hash}")
 
         result = data.get("result")
         if not result or not isinstance(result, dict):
             return None
 
-        # Got the tx — now get the receipt
-        url_receipt = (
-            f"https://api.etherscan.io/v2/api?chainid={chainid}"
-            f"&module=proxy&action=eth_getTransactionReceipt"
-            f"&txhash={tx_hash}&apikey={api_key}"
-        )
-        data2 = _rate_limited_get(url_receipt)
+        data2 = _rate_limited_get(f"{url_base}&module=proxy&action=eth_getTransactionReceipt&txhash={tx_hash}")
         receipt = data2.get("result")
         if not isinstance(receipt, dict):
             receipt = {}
@@ -416,79 +405,63 @@ def _fetch_v2(tx_hash, chain):
         return None
 
 
+def _check_chain(tx_hash, chain):
+    """Try direct API first (if available), then V2."""
+    # Try direct API (Base, OP, BNB, AVAX, and their testnets)
+    if chain["chainid"] in DIRECT_API_ENDPOINTS:
+        result = _try_direct_api(tx_hash, chain)
+        if result:
+            return result
+    # Try V2
+    return _try_v2_api(tx_hash, chain)
+
+
 def fetch_real_transaction(tx_hash):
-    """
-    Search all chains to find the transaction.
-    Step 1: Direct API chains in parallel (separate rate limits).
-    Step 2: V2 free-tier chains with shared rate limiter.
-    """
+    """Search all chains. Priority mainnets first, then remaining."""
     print(f"📡 Searching across {len(ALL_CHAINS)} EVM chains...", flush=True)
     start = time.time()
 
-    # ── Step 1: DIRECT_CHAINS in parallel (each has its own API, no shared limit)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(_fetch_direct, tx_hash, c): c for c in DIRECT_CHAINS}
-        for f in as_completed(futures):
-            result = f.result()
-            if result:
-                chain = futures[f]
-                print(f"✅ Found on {chain['name']} (direct) in {time.time()-start:.1f}s", flush=True)
-                return result
+    # Split into priority mainnets (first 15) and the rest
+    priority = ALL_CHAINS[:15]
+    remaining = ALL_CHAINS[15:]
 
-    # ── Step 2: V2 free-tier — priority mainnets first, then rest
-    priority_v2 = [c for c in V2_FREE_CHAINS if not c.get("testnet", False)][:15]
-    remaining_v2 = [c for c in V2_FREE_CHAINS if c not in priority_v2]
-
-    # Batch 2a: Top 15 mainnets
+    # Batch 1: Priority mainnets — 3 workers (rate limiter prevents overload)
     with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = {pool.submit(_fetch_v2, tx_hash, c): c for c in priority_v2}
+        futures = {pool.submit(_check_chain, tx_hash, c): c for c in priority}
         for f in as_completed(futures):
             result = f.result()
             if result:
                 chain = futures[f]
-                print(f"✅ Found on {chain['name']} (v2) in {time.time()-start:.1f}s", flush=True)
+                print(f"✅ Found on {chain['name']} in {time.time()-start:.1f}s", flush=True)
                 return result
 
-    # Batch 2b: Smaller mainnets + all testnets
-    if remaining_v2:
+    # Batch 2: Remaining chains
+    if remaining:
         with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = {pool.submit(_fetch_v2, tx_hash, c): c for c in remaining_v2}
+            futures = {pool.submit(_check_chain, tx_hash, c): c for c in remaining}
             for f in as_completed(futures):
                 result = f.result()
                 if result:
                     chain = futures[f]
-                    print(f"✅ Found on {chain['name']} (v2) in {time.time()-start:.1f}s", flush=True)
+                    print(f"✅ Found on {chain['name']} in {time.time()-start:.1f}s", flush=True)
                     return result
 
-    print(f"⚠️  Transaction not found on any chain ({time.time()-start:.1f}s)", flush=True)
+    print(f"⚠️  Not found on any chain ({time.time()-start:.1f}s)", flush=True)
     return None
 
 
 def get_fallback_transaction(tx_hash):
-    """Return a placeholder when no chain has this transaction."""
     return {
-        "hash": tx_hash,
-        "from": "unknown",
-        "to": "unknown",
-        "value": "unknown",
-        "gasUsed": 0,
-        "gasPrice": "unknown",
-        "gasFeeETH": "unknown",
-        "blockNumber": 0,
-        "status": "Unknown",
-        "chain": "Unknown",
-        "chainExplorer": "",
-        "symbol": "ETH",
-        "isTestnet": False,
-        "tokenTransfers": [],
-        "isContractCall": False,
-        "inputData": "0x",
-        "nonce": 0,
+        "hash": tx_hash, "from": "unknown", "to": "unknown", "value": "unknown",
+        "gasUsed": 0, "gasPrice": "unknown", "gasFeeETH": "unknown",
+        "blockNumber": 0, "status": "Unknown", "chain": "Unknown",
+        "chainExplorer": "", "symbol": "ETH", "isTestnet": False,
+        "tokenTransfers": [], "isContractCall": False, "inputData": "0x", "nonce": 0,
     }
 
 
 # ══════════════════════════════════════════════════════════════
-# OPENGRADIENT AI ANALYSIS
+# OPENGRADIENT AI
 # ══════════════════════════════════════════════════════════════
 
 def call_opengradient(prompt, max_retries=2):
@@ -498,18 +471,16 @@ def call_opengradient(prompt, max_retries=2):
     for attempt in range(1, max_retries + 1):
         try:
             print(f"🚀 LLM attempt {attempt}...", flush=True)
-            start = time.time()
+            t = time.time()
             result = client.llm.chat(
                 model=og.TEE_LLM.GEMINI_2_5_FLASH,
                 messages=[
                     {"role": "system", "content": "You are a blockchain transaction analyst. Explain transactions clearly for beginners. Use markdown with ## headers and **bold**."},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=600,
-                temperature=0.3,
+                max_tokens=600, temperature=0.3,
             )
-            elapsed = time.time() - start
-            print(f"✅ LLM responded in {elapsed:.1f}s", flush=True)
+            print(f"✅ LLM responded in {time.time()-t:.1f}s", flush=True)
             explanation = None
             if hasattr(result, "chat_output"):
                 co = result.chat_output
@@ -528,12 +499,12 @@ def analyze_transaction_data(tx_data):
     chain_name = tx_data.get("chain", "Unknown")
     explorer_link = tx_data.get("chainExplorer", "")
     is_testnet = tx_data.get("isTestnet", False)
-    token_transfers = tx_data.get("tokenTransfers", [])
+    trs = tx_data.get("tokenTransfers", [])
 
     tr_txt = ""
-    if token_transfers:
+    if trs:
         tr_txt = "\nToken transfers:\n" + "\n".join(
-            [f"- {t['amount']} {t['token']} → {t['to'][:12]}..." for t in token_transfers]
+            [f"- {t['amount']} {t['token']} → {t['to'][:12]}..." for t in trs]
         )
 
     prompt = f"""Explain this {'testnet ' if is_testnet else ''}transaction from **{chain_name}** simply.
@@ -552,42 +523,24 @@ Use ## headers, **bold**.
     result = call_opengradient(prompt)
 
     if result:
-        payment_hash = result.get("payment_hash")
+        ph = result.get("payment_hash")
         return {
             "explanation": result["explanation"],
             "proof": {
-                "paymentHash": payment_hash or "verified-no-settlement",
-                "model": "GEMINI_2_5_FLASH",
-                "verifiedByTEE": True,
-                "explorerUrl": f"https://explorer.opengradient.ai/tx/{payment_hash}" if payment_hash else "https://explorer.opengradient.ai",
-                "settlementNetwork": "Base Sepolia",
-                "inferenceNetwork": "OpenGradient",
-                "mode": "LIVE",
+                "paymentHash": ph or "verified-no-settlement",
+                "model": "GEMINI_2_5_FLASH", "verifiedByTEE": True,
+                "explorerUrl": f"https://explorer.opengradient.ai/tx/{ph}" if ph else "https://explorer.opengradient.ai",
+                "settlementNetwork": "Base Sepolia", "inferenceNetwork": "OpenGradient", "mode": "LIVE",
             },
         }
 
-    # Fallback — no AI available
     return {
-        "explanation": f"""## Transaction on {chain_name}
-**Hash:** {tx_data['hash'][:16]}...
-**From:** {tx_data['from']}
-**To:** {tx_data['to']}
-**Value:** {tx_data['value']}
-**Status:** {tx_data['status']}
-**Block:** #{tx_data['blockNumber']:,}
-**Gas Fee:** {tx_data['gasFeeETH']}
-
-{f"[View on Explorer]({explorer_link})" if explorer_link else ""}
-
-⚠️ AI explanation unavailable — showing raw data.""",
+        "explanation": f"## Transaction on {chain_name}\n**From:** {tx_data['from']}\n**To:** {tx_data['to']}\n**Value:** {tx_data['value']}\n**Status:** {tx_data['status']}\n**Gas Fee:** {tx_data['gasFeeETH']}\n\n{f'[View on Explorer]({explorer_link})' if explorer_link else ''}\n\n⚠️ AI explanation unavailable.",
         "proof": {
             "paymentHash": "0x" + secrets.token_hex(32),
-            "model": "fallback (no AI)",
-            "verifiedByTEE": False,
+            "model": "fallback (no AI)", "verifiedByTEE": False,
             "explorerUrl": "https://explorer.opengradient.ai",
-            "settlementNetwork": "Base Sepolia",
-            "inferenceNetwork": "OpenGradient Testnet",
-            "mode": "MOCK",
+            "settlementNetwork": "Base Sepolia", "inferenceNetwork": "OpenGradient Testnet", "mode": "MOCK",
         },
     }
 
@@ -600,11 +553,9 @@ Use ## headers, **bold**.
 def index():
     return send_from_directory("public", "index.html")
 
-
 @app.route("/<path:path>")
 def static_files(path):
     return send_from_directory("public", path)
-
 
 @app.route("/analyze-transaction", methods=["POST", "OPTIONS"])
 def analyze_transaction():
@@ -618,33 +569,24 @@ def analyze_transaction():
         if not tx_hash.startswith("0x") or len(tx_hash) < 10:
             return jsonify({"error": "Hash must start with '0x' and be valid hex."}), 400
 
-        print(f"\n{'='*50}", flush=True)
-        print(f"🔍 Analyzing: {tx_hash}", flush=True)
+        print(f"\n{'='*50}\n🔍 Analyzing: {tx_hash}", flush=True)
 
         tx_data = fetch_real_transaction(tx_hash)
         if tx_data is None:
-            print("⚠️  Not found — using fallback", flush=True)
+            print("⚠️  Not found — fallback", flush=True)
             tx_data = get_fallback_transaction(tx_hash)
 
         analysis = analyze_transaction_data(tx_data)
 
-        mode = analysis["proof"]["mode"]
-        chain = tx_data.get("chain", "Unknown")
-        print(f"📤 Result: {mode} | Chain: {chain}", flush=True)
-        print(f"{'='*50}\n", flush=True)
+        print(f"📤 {analysis['proof']['mode']} | {tx_data.get('chain','?')}\n{'='*50}", flush=True)
 
         return jsonify({
             "success": True,
             "transaction": {
-                "hash": tx_data["hash"],
-                "from": tx_data["from"],
-                "to": tx_data["to"],
-                "value": tx_data["value"],
-                "gasUsed": tx_data["gasUsed"],
-                "gasPrice": tx_data["gasPrice"],
-                "gasFee": tx_data["gasFeeETH"],
-                "status": tx_data["status"],
-                "block": tx_data["blockNumber"],
+                "hash": tx_data["hash"], "from": tx_data["from"], "to": tx_data["to"],
+                "value": tx_data["value"], "gasUsed": tx_data["gasUsed"],
+                "gasPrice": tx_data["gasPrice"], "gasFee": tx_data["gasFeeETH"],
+                "status": tx_data["status"], "block": tx_data["blockNumber"],
                 "chain": tx_data.get("chain", "Unknown"),
                 "chainExplorer": tx_data.get("chainExplorer", ""),
                 "isTestnet": tx_data.get("isTestnet", False),
@@ -654,33 +596,27 @@ def analyze_transaction():
             "proof": analysis["proof"],
         })
     except Exception as e:
-        print(f"❌ Route error: {e}", flush=True)
+        print(f"❌ {e}", flush=True)
         traceback.print_exc()
         return jsonify({"error": "Something went wrong."}), 500
 
-
 @app.route("/chains")
 def chains_list():
-    return jsonify({
-        "total": len(ALL_CHAINS),
-        "chains": [{"name": c["name"], "chainid": c["chainid"], "symbol": c["symbol"]} for c in ALL_CHAINS],
-    })
-
+    return jsonify({"total": len(ALL_CHAINS), "chains": [{"name": c["name"], "chainid": c["chainid"], "symbol": c["symbol"]} for c in ALL_CHAINS]})
 
 @app.route("/debug")
 def debug():
     pk = os.environ.get("OG_PRIVATE_KEY", "")
-    has_key = bool(pk) and "YOUR" not in pk
     return jsonify({
         "sdk": OG_AVAILABLE,
-        "key": f"{pk[:8]}..." if has_key else "NOT SET",
+        "key": f"{pk[:8]}..." if pk and "YOUR" not in pk else "NOT SET",
         "etherscan_key": "SET" if ETHERSCAN_KEY else "FREE TIER",
+        "basescan_key": "SET" if os.environ.get("BASESCAN_API_KEY", "") else "NOT SET",
         "chains": len(ALL_CHAINS),
         "tokens": len(KNOWN_TOKENS),
     })
 
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    print(f"🛡️  Server on http://0.0.0.0:{port} | SDK:{OG_AVAILABLE} | {len(ALL_CHAINS)} chains | {len(KNOWN_TOKENS)} tokens", flush=True)
+    print(f"🛡️  http://0.0.0.0:{port} | SDK:{OG_AVAILABLE} | {len(ALL_CHAINS)} chains | {len(KNOWN_TOKENS)} tokens", flush=True)
     app.run(host="0.0.0.0", port=port, debug=False)
