@@ -284,33 +284,31 @@ def _fetch_v2(h,c):
 
 def fetch_tx(h):
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    print(f"📡 Parallel search across {len(ALL_CHAINS)} chains...",flush=True)
+    print(f"📡 Searching {len(ALL_CHAINS)} chains...",flush=True)
     start=time.time()
-    found=[None]  # mutable container for early exit
 
-    def check_direct(c):
-        if found[0]: return None
-        r=_fetch_direct(h,c)
-        if r: found[0]=r; print(f"✅ {c['name']} (direct) in {time.time()-start:.1f}s",flush=True)
-        return r
+    def check(c):
+        if c.get("api"): return _fetch_direct(h,c)
+        return _fetch_v2(h,c)
 
-    def check_v2(c):
-        if found[0]: return None
-        r=_fetch_v2(h,c)
-        if r: found[0]=r; print(f"✅ {c['name']} in {time.time()-start:.1f}s",flush=True)
-        return r
-
-    # Search all chains in parallel (max 15 threads to respect API rate limits)
-    with ThreadPoolExecutor(max_workers=15) as pool:
-        futures=[]
-        for c in DIRECT_CHAINS:
-            futures.append(pool.submit(check_direct,c))
-        for c in V2_CHAINS:
-            futures.append(pool.submit(check_v2,c))
-        for f in as_completed(futures):
-            r=f.result()
+    # Batch 1: Priority chains (Base, OP, BNB, AVAX, ETH, Arb, Polygon) — 4 at a time
+    priority = DIRECT_CHAINS[:4] + V2_CHAINS[:3]  # 7 chains
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        fmap = {pool.submit(check,c): c for c in priority}
+        for f in as_completed(fmap):
+            r = f.result()
             if r:
-                print(f"⚡ Found in {time.time()-start:.1f}s (parallel)",flush=True)
+                print(f"✅ {fmap[f]['name']} in {time.time()-start:.1f}s",flush=True)
+                return r
+
+    # Batch 2: Remaining chains — 4 at a time
+    remaining = DIRECT_CHAINS[4:] + V2_CHAINS[3:]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        fmap = {pool.submit(check,c): c for c in remaining}
+        for f in as_completed(fmap):
+            r = f.result()
+            if r:
+                print(f"✅ {fmap[f]['name']} in {time.time()-start:.1f}s",flush=True)
                 return r
 
     print(f"⚠️ Not found ({time.time()-start:.1f}s)",flush=True)
